@@ -1,0 +1,29 @@
+name: Suggest an idea · اقتراح فكرة
+description: A new tool, or a better way to do something in HonoKit. · أداة جديدة، أو طريقة أفضل لعمل شيء في HonoKit.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please write in English or Arabic. HonoKit stays offline, free and without an account: ideas that need a server or a sign-in are unlikely to be taken up.
+        يمكنك الكتابة بالعربية أو بالإنجليزية. يبقى HonoKit مجانيًا ويعمل دون اتصال ودون حساب.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do? · ما الذي تحاول فعله؟
+      description: The task, and what gets in the way today. · المهمة، وما الذي يعيقك اليوم.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea · فكرتك
+      description: How it could work. Another program that does it well is a useful pointer. · كيف يمكن أن تعمل، وإن كان برنامج آخر يقوم بها جيدًا فاذكره.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else · أي شيء آخر
+    validations:
+      required: false

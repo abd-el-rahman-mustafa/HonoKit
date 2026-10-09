@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!--
+    HonoKit's mark for 16–48 px (decisions §72): build/icon.svg's drawing with the fine details
+    taken out, so it stays crisp in the Start menu, the taskbar and File Explorer. No crease,
+    sheen, glows or shadows; one violet hill and a bigger sun; flat page colours. Same shapes and
+    places as icon.svg, so the two sizes read as one mark. Packed into build/icon.ico by
+    `npm run icons`.
+  -->
+  <defs>
+    <linearGradient id="violet" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7a8cff"/><stop offset="1" stop-color="#5233d8"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffdf6a"/><stop offset="1" stop-color="#f5a524"/></linearGradient>
+    <linearGradient id="f1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff6a0"/><stop offset="1" stop-color="#ffc21e"/></linearGradient>
+    <linearGradient id="f2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb21e"/><stop offset="1" stop-color="#ff641a"/></linearGradient>
+    <linearGradient id="f3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5a2a"/><stop offset="1" stop-color="#e3342c"/></linearGradient>
+    <linearGradient id="f4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff7a2a"/><stop offset="1" stop-color="#f04a2c"/></linearGradient>
+    <linearGradient id="f5" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd24d"/><stop offset="1" stop-color="#ff942e"/></linearGradient>
+    <linearGradient id="f6" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe48a"/><stop offset="1" stop-color="#ffb23a"/></linearGradient>
+    <linearGradient id="f7" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fffbe6"/><stop offset="1" stop-color="#ffe066"/></linearGradient>
+    <linearGradient id="f8" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc247"/><stop offset="1" stop-color="#ff7a2a"/></linearGradient>
+    <clipPath id="photoClip"><rect x="13" y="23" width="23" height="31" rx="6"/></clipPath>
+  </defs>
+
+  <g transform="translate(32 30.5) scale(-1.22 1.22) translate(-32.1 -35.5)">
+    <g transform="translate(1.5 0) rotate(-5 28 58)">
+      <rect x="13" y="23" width="23" height="31" rx="6" fill="url(#gold)"/>
+      <g clip-path="url(#photoClip)">
+        <polygon points="13,54 13,46 22,37 36,48 36,54" fill="#5b3fe0"/>
+      </g>
+      <circle cx="20" cy="30.5" r="3.8" fill="#fff"/>
+    </g>
+    <g transform="translate(-1.5 0) rotate(5 36 58)">
+      <path d="M36 12H41L51 22V47a7 7 0 0 1-7 7H35a7 7 0 0 1-7-7V19a7 7 0 0 1 7-7Z" fill="url(#violet)"/>
+      <path d="M41 12V17a5 5 0 0 0 5 5H51Z" fill="#dcd4ff"/>
+    </g>
+    <g transform="translate(32.5 35.5) scale(.84) translate(-32.5 -32)" stroke-width=".8" stroke-linejoin="round">
+      <polygon points="29,27 36,4 32,40" fill="url(#f1)" stroke="url(#f1)"/>
+      <polygon points="36,4 48,28 32,40" fill="url(#f2)" stroke="url(#f2)"/>
+      <polygon points="48,28 47,48 32,40" fill="url(#f3)" stroke="url(#f3)"/>
+      <polygon points="47,48 32,60 32,40" fill="url(#f4)" stroke="url(#f4)"/>
+      <polygon points="32,60 17,48 32,40" fill="url(#f5)" stroke="url(#f5)"/>
+      <polygon points="17,48 19,30 32,40" fill="url(#f6)" stroke="url(#f6)"/>
+      <polygon points="19,30 29,27 32,40" fill="url(#f7)" stroke="url(#f7)"/>
+      <polygon points="24,16 29,27 19,30" fill="url(#f8)" stroke="url(#f8)"/>
+    </g>
+  </g>
+</svg>

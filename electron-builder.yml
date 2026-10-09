@@ -1,0 +1,191 @@
+# The name lives here, in package.json and in src/shared/brand.ts (APP_ID too); decisions §49, §71.
+appId: com.aamus.honokit
+productName: HonoKit
+# Windows shows the file description as the app's name (Task Manager, Windows Security
+# messages); keep it the name, not package.json's long description.
+extraMetadata:
+  description: HonoKit
+copyright: Copyright © 2026 HonoKit contributors
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+# Fonts for stamps (IBM Plex Sans Arabic, Noto Sans) are read by the worker at run
+# time, so they ship beside the asar rather than inside it.
+extraResources:
+  - from: resources
+    to: resources
+    filter:
+      - '**/*'
+
+# Chromium's own interface strings for the two languages HonoKit speaks; the other ~53 (about
+# 42 MB installed) are never shown: the app draws its own menus and dialogs (measured 2026-10-09).
+electronLanguages:
+  - en-US
+  - ar
+
+asar: true
+# Text recognition's runtime is a native module with DLLs beside it: they cannot load from
+# inside the asar (decisions §52).
+asarUnpack:
+  - '**/node_modules/onnxruntime-node/**'
+  # The image tools' native image library (libvips) loads DLLs beside it too (decisions §69).
+  - '**/node_modules/sharp/**'
+  - '**/node_modules/@img/**'
+
+# Installer names carry no spaces: GitHub rewrites spaces in release file names,
+# which would no longer match latest.yml (docs/release-and-updates.md).
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+# "Open with HonoKit" for PDF files and pictures (decisions §74, §75). It does not make
+# HonoKit the default viewer; the operating system asks the person. Set per platform (win,
+# mac, linux), not here: a platform's list is added to the top-level one rather than
+# replacing it, and Windows needs its own ProgIDs.
+
+# The GitHub release feed electron-updater reads. Also what writes app-update.yml
+# into the installed app; scripts/release-desktop.mjs (or CI) publishes, never this file.
+# A separate public repository, because the source repository is private (decisions §73).
+# The updater reads the release marked "Latest"; Android releases there never take that mark.
+publish:
+  - provider: github
+    owner: abd-el-rahman-mustafa
+    repo: HonoKit
+    releaseType: release
+
+# Ad-hoc signs the macOS bundle before the dmg and zip are built from it; does
+# nothing on other platforms. See the script for why it cannot be `mac.identity`.
+afterPack: scripts/mac-adhoc-sign.mjs
+
+win:
+  # Only the Windows x64 build of the recognition runtime (the package ships all platforms, 288 MB).
+  # A platform's `files` replaces the top-level list, so it repeats it: without out/** and
+  # package.json here, electron-builder packs the whole project folder (tests, corpus…).
+  files:
+    - out/**
+    - package.json
+    - '!**/node_modules/onnxruntime-node/bin/napi-v6/darwin/**'
+    - '!**/node_modules/onnxruntime-node/bin/napi-v6/linux/**'
+    - '!**/node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**'
+    # The graphics-card (DirectML) runtime: the AI and text recognition run on the processor only
+    # (no executionProviders), and onnxruntime.dll loads and runs without these (tested 2026-10-09).
+    - '!**/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/{DirectML,dxcompiler,dxil}.dll'
+    # ImageMagick ships a 32-bit and a 64-bit-memory WebAssembly build; the app loads only the
+    # first (the other fails to start; docs/research-image-formats.md).
+    - '!**/node_modules/@imagemagick/magick-wasm/dist/x64/**'
+    # Nothing the app loads (measured 2026-10-09, about 50 MB of the package): debug maps, type
+    # files and readmes, and the builds of a library that Node never picks — pdf-lib loads cjs/,
+    # docx its index.mjs/.cjs, exceljs its lib/ (dist/ is for browsers). The window's own
+    # libraries (React, icons…) are bundled into out/renderer and are devDependencies.
+    - '!**/*.map'
+    - '!**/node_modules/**/*.{d.ts,d.cts,d.mts,md,markdown}'
+    - '!**/node_modules/**/{CHANGELOG,HISTORY,AUTHORS}*'
+    - '!**/node_modules/pdf-lib/{es,dist,src}/**'
+    - '!**/node_modules/exceljs/dist/**'
+    - '!**/node_modules/docx/dist/*.{umd.cjs,iife.js}'
+  # On Windows `name` is the ProgID (HKCU\Software\Classes\<name>), so it must be HonoKit's
+  # own. PowerPDF, HonoPDF and HonoKit 0.17.0 all used "PDF Document": each installer
+  # overwrote the others' command, an uninstall deleted it, and "Open with" lost HonoKit.
+  # build/installer.nsh removes that old shared ProgID.
+  # Pictures have their own ProgID, HonoKit.Image (§75); build/installer.nsh keeps them from
+  # becoming HonoKit's by default and adds "Edit with HonoKit" for PDFs and pictures.
+  fileAssociations:
+    - ext: pdf
+      name: HonoKit.PDF
+      description: PDF Document
+      mimeType: application/pdf
+      role: Editor
+    - ext: [jpg, jpeg, jfif, png, webp, gif, heic, heif, avif, tif, tiff, bmp, svg, ico, jxl]
+      name: HonoKit.Image
+      description: Image
+      role: Viewer
+  # Installed copies accept an update only if it is signed by this name (decisions §36;
+  # docs/research-signpath.md §3.5.1). Local builds are unsigned and are not published.
+  signtoolOptions:
+    publisherName:
+      - SignPath Foundation
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  artifactName: ${productName}-Setup-${version}.${ext}
+  oneClick: false
+  # Per user, and not merely "not forced to be per-machine": an install under the
+  # user's own profile can replace its own files, so a silent update never needs a
+  # UAC prompt with no window behind it.
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: HonoKit
+  deleteAppDataOnUninstall: false
+  # A per-user install never elevates; not shipping elevate.exe avoids an unsigned upstream exe.
+  packElevateHelper: false
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+
+mac:
+  category: public.app-category.productivity
+  fileAssociations:
+    - ext: pdf
+      name: PDF Document
+      mimeType: application/pdf
+      role: Editor
+    - ext: [jpg, jpeg, jfif, png, webp, gif, heic, heif, avif, tif, tiff, bmp, svg, ico, jxl]
+      name: Image
+      role: Viewer
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  # No Apple certificate; see scripts/mac-adhoc-sign.mjs.
+  identity: null
+
+dmg:
+  title: HonoKit ${version}
+
+linux:
+  category: Office
+  fileAssociations:
+    - ext: pdf
+      name: PDF Document
+      mimeType: application/pdf
+  # Pictures: the desktop entry says it opens them; their MIME types are the system's own,
+  # so no fileAssociations entries (each would redefine a standard type).
+  mimeTypes:
+    - image/jpeg
+    - image/png
+    - image/webp
+    - image/gif
+    - image/heic
+    - image/heif
+    - image/avif
+    - image/tiff
+    - image/bmp
+    - image/svg+xml
+    - image/vnd.microsoft.icon
+    - image/jxl
+  synopsis: PDF and image tools that work offline
+  desktop:
+    entry:
+      Name: HonoKit
+      Comment: Read, edit, organise and convert PDF files and pictures offline
+      Keywords: pdf;merge;split;compress;watermark;arabic;image;photo;viewer;
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+
+deb:
+  maintainer: HonoKit <abd-el-rahman-mustafa@users.noreply.github.com>

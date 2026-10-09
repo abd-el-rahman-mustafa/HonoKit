@@ -1,0 +1,196 @@
+@import 'tailwindcss';
+
+/*
+ * Colour is a token. This file is the only one that knows a hex value; components
+ * use bg-surface, text-muted, border-line and so on, which is what lets the dark
+ * theme (a second set of values, not a second set of classes) reskin everything.
+ */
+
+@font-face {
+  font-family: 'Plex Arabic';
+  src: url('./assets/IBMPlexSansArabic-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Plex Arabic';
+  src: url('./assets/IBMPlexSansArabic-Bold.ttf') format('truetype');
+  font-weight: 600 700;
+  font-display: swap;
+}
+
+:root {
+  --bg: #f3f3f3;
+  --surface: #ffffff;
+  --surface-2: #f5f5f5;
+  --sunken: #ebebeb;
+  --ink: #1f1f1f;
+  --muted: #555c66;
+  --faint: #8a9099;
+  --line: #e1e1e1;
+  --accent: #1473e6;
+  --accent-ink: #ffffff;
+  --accent-soft: #e5f0fd;
+  --brand: #5a5ff0;
+  --ok: #1f8a4c;
+  --warn: #b7791f;
+  --danger: #c53030;
+  --focus: #1473e6;
+  --page-shadow: 0 1px 3px rgb(15 23 42 / 0.16), 0 4px 14px rgb(15 23 42 / 0.08);
+  --highlight: rgb(255 214 0 / 0.42);
+  --highlight-current: rgb(255 120 0 / 0.55);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #1b1b1b;
+  --surface: #252525;
+  --surface-2: #2c2c2c;
+  --sunken: #161616;
+  --ink: #ebebeb;
+  --muted: #b0b0b0;
+  --faint: #8a8a8a;
+  --line: #3a3a3a;
+  --accent: #4b9cf5;
+  --accent-ink: #ffffff;
+  --accent-soft: #1d3350;
+  --brand: #8f93ff;
+  --ok: #4cc27f;
+  --warn: #e0a84a;
+  --danger: #f06a6a;
+  --focus: #4b9cf5;
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 0.5), 0 6px 18px rgb(0 0 0 / 0.35);
+  --highlight: rgb(255 214 0 / 0.35);
+  --highlight-current: rgb(255 140 0 / 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-brand: var(--brand);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-focus: var(--focus);
+  --font-sans: system-ui, 'Segoe UI', 'Plex Arabic', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* Arabic reads better in Plex than in the system fallback. */
+:root[lang='ar'] body {
+  font-family: 'Plex Arabic', system-ui, 'Segoe UI', sans-serif;
+}
+
+input,
+textarea,
+select {
+  user-select: text;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* Fields draw their own focus ring (a soft ring round the field, as Spectrum and Fluent do);
+   the outline above on top of it made a second, inner border. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* Number fields: no spinner arrows (they look like Windows 95). */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Transparent pictures in the picture viewer show over a light checkerboard, as image viewers do. */
+.picture-checker {
+  background: repeating-conic-gradient(#d9dce1 0 25%, #ffffff 0 50%) 0 0 / 16px 16px;
+}
+
+.page-shadow {
+  box-shadow: var(--page-shadow);
+}
+
+.hit {
+  background: var(--highlight);
+  mix-blend-mode: multiply;
+}
+.hit-current {
+  background: var(--highlight-current);
+}
+:root[data-theme='dark'] .hit {
+  mix-blend-mode: normal;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation-duration: 0s !important;
+  }
+}
+
+/* Misspelled words in the text box (spellMarks.ts, §67): a red wavy line, as in Word. */
+::highlight(hono-spell) {
+  text-decoration: underline wavy #e5484d;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-skip-ink: none;
+}

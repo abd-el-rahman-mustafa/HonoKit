@@ -1,0 +1,72 @@
+name: Report a problem · الإبلاغ عن مشكلة
+description: Something in HonoKit does not work as it should. · شيء في HonoKit لا يعمل كما ينبغي.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report this. Please write in English or Arabic.
+        شكرًا لك على الإبلاغ. يمكنك الكتابة بالعربية أو بالإنجليزية.
+
+        **Attach a PDF or picture only if it has nothing private in it.** Issues are public.
+        **لا تُرفق ملف PDF أو صورة إلا إذا كانت لا تحتوي على أي شيء خاص.** البلاغات علنية.
+
+        A security problem? Do not open an issue: report it privately (see SECURITY.md).
+        مشكلة أمنية؟ لا تفتح بلاغًا علنيًا، بل أبلغ عنها بشكل خاص (راجع SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: HonoKit version · إصدار HonoKit
+      description: Settings › About. Filled in when you use "Report a problem" in the app. · الإعدادات › حول.
+      placeholder: "0.18.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system · نظام التشغيل
+      placeholder: "Windows 11 (10.0.26100)"
+    validations:
+      required: true
+  - type: input
+    id: language
+    attributes:
+      label: App language · لغة التطبيق
+      placeholder: "English / Arabic"
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce · خطوات إعادة المشكلة
+      description: What did you do, step by step? Which tool? · ماذا فعلت خطوة بخطوة؟ وأي أداة استخدمت؟
+      placeholder: |
+        1. Open a PDF…
+        2. Choose Edit › …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened · ما الذي حدث
+      description: Include any error message, and a screenshot if it helps (nothing private). · أضف رسالة الخطأ، ولقطة شاشة إن كانت تساعد (دون أي شيء خاص).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected · ما الذي كنت تتوقعه
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: About the file · عن الملف
+      description: |
+        Where does the file come from (scanner, Word, a website…)? Is it in Arabic? Does it happen with other files?
+        Attach the file only if it has nothing private in it.
+        من أين الملف (ماسح ضوئي، Word، موقع…)؟ هل هو بالعربية؟ هل تحدث المشكلة مع ملفات أخرى؟
+        لا تُرفق الملف إلا إذا كان لا يحتوي على أي شيء خاص.
+    validations:
+      required: false
