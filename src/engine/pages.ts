@@ -270,25 +270,40 @@ function separateRepeats(doc: PdfDoc): void {
 // --- The catalogue after rearranging ------------------------------------------------------------
 
 /** The entries of a number tree (/Nums, /Kids), flattened and sorted by key. */
-function numberTree(tree: mupdf.PDFObject, depth = 0): Array<[number, mupdf.PDFObject]> {
+function numberTree(tree: mupdf.PDFObject): Array<[number, mupdf.PDFObject]> {
   const out: Array<[number, mupdf.PDFObject]> = []
-  if (!tree.isDictionary() || depth > 16) return out
-  const nums = tree.get('Nums')
-  if (nums.isArray()) for (let i = 0; i + 1 < nums.length; i += 2) if (nums.get(i).isNumber()) out.push([nums.get(i).asNumber(), nums.get(i + 1)])
-  const kids = tree.get('Kids')
-  if (kids.isArray()) for (let i = 0; i < kids.length; i++) out.push(...numberTree(kids.get(i), depth + 1))
+  walkTree(tree, 'Nums', 0, new Set(), (key, value) => {
+    if (key.isNumber()) out.push([key.asNumber(), value])
+    return out.length
+  })
   return out.sort((a, b) => a[0] - b[0])
 }
 
 /** The entries of a name tree (/Names, /Kids), flattened. */
-function nameTree(tree: mupdf.PDFObject, depth = 0): Array<[mupdf.PDFObject, mupdf.PDFObject]> {
+function nameTree(tree: mupdf.PDFObject): Array<[mupdf.PDFObject, mupdf.PDFObject]> {
   const out: Array<[mupdf.PDFObject, mupdf.PDFObject]> = []
-  if (!tree.isDictionary() || depth > 16) return out
-  const names = tree.get('Names')
-  if (names.isArray()) for (let i = 0; i + 1 < names.length; i += 2) out.push([names.get(i), names.get(i + 1)])
-  const kids = tree.get('Kids')
-  if (kids.isArray()) for (let i = 0; i < kids.length; i++) out.push(...nameTree(kids.get(i), depth + 1))
+  walkTree(tree, 'Names', 0, new Set(), (key, value) => out.push([key, value]))
   return out
+}
+
+/** More entries than any real tree has; a hostile file stops here instead of filling memory. */
+const TREE_ENTRIES = 100_000
+
+/**
+ * Visits a number or name tree's pairs. A node listed twice is read once and the pairs are
+ * capped, so a tree that repeats one branch at every level cannot run for ever. `visit` returns
+ * how many pairs are kept so far.
+ */
+function walkTree(tree: mupdf.PDFObject, key: 'Nums' | 'Names', depth: number, seen: Set<number>, visit: (key: mupdf.PDFObject, value: mupdf.PDFObject) => number, count = { n: 0 }): void {
+  if (!tree.isDictionary() || depth > 16 || count.n >= TREE_ENTRIES) return
+  if (tree.isIndirect()) {
+    if (seen.has(tree.asIndirect())) return
+    seen.add(tree.asIndirect())
+  }
+  const pairs = tree.get(key)
+  if (pairs.isArray()) for (let i = 0; i + 1 < pairs.length && count.n < TREE_ENTRIES; i += 2) count.n = visit(pairs.get(i), pairs.get(i + 1))
+  const kids = tree.get('Kids')
+  if (kids.isArray()) for (let i = 0; i < kids.length && count.n < TREE_ENTRIES; i++) walkTree(kids.get(i), key, depth + 1, seen, visit, count)
 }
 
 /** The page a destination (explicit array, or a dictionary with /D) points at, as an object number. */
@@ -306,9 +321,16 @@ function destPage(dest: mupdf.PDFObject): number | null {
 function relabel(doc: PdfDoc, labels: mupdf.PDFObject, order: number[]): mupdf.PDFObject | null {
   const ranges = numberTree(labels)
   if (ranges.length === 0) return null
+  // The last range starting at or before the page (the ranges are sorted).
   const rangeOf = (page: number): number => {
     let found = -1
-    for (let r = 0; r < ranges.length; r++) if (ranges[r]![0] <= page) found = r
+    for (let lo = 0, hi = ranges.length - 1; lo <= hi; ) {
+      const mid = (lo + hi) >> 1
+      if (ranges[mid]![0] <= page) {
+        found = mid
+        lo = mid + 1
+      } else hi = mid - 1
+    }
     return found
   }
   const nums = doc.newArray()

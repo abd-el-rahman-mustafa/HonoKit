@@ -31,8 +31,9 @@ export type RedactPattern = 'email' | 'phone' | 'emiratesId' | 'iban' | 'card' |
 
 const PATTERNS: Record<RedactPattern, RegExp> = {
   email: /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu,
-  // UAE numbers (+971 / 00971 / 0 then 5x or a landline code), and other international numbers.
-  phone: /(?:(?:\+|00)971[\s-]?|\b0)(?:5\d|[2-9])[\s-]?\d{3}[\s-]?\d{4}\b|\+\d{1,3}[\s-]?\(?\d{1,4}\)?(?:[\s-]?\d{2,4}){2,4}/g,
+  // UAE numbers (+971 / 00971 / 0 then 5x or a landline code), and other international numbers
+  // (+ or 00, groups split by spaces, dashes or dots), taken whole so no part stays readable.
+  phone: /(?:(?:\+|\b00)971[\s.-]?|\b0)(?:5\d|[2-9])[\s.-]?\d{3}[\s.-]?\d{4}\b|(?:\+|\b00)\d{1,3}[\s.-]?\(?\d{1,4}\)?(?:[\s.-]?\d{2,4}){2,5}/g,
   emiratesId: /\b784[\s-]?\d{4}[\s-]?\d{7}[\s-]?\d\b/g,
   // Case-insensitive because lines are matched folded; the checksum keeps it from matching words.
   iban: /\b[a-z]{2}\d{2}(?:\s?[a-z0-9]{4}){2,7}(?:\s?[a-z0-9]{1,4})?\b/gi,

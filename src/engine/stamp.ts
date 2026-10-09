@@ -1,4 +1,5 @@
 import { degrees, PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib'
+import { exifOrientation } from '@shared/exif'
 import type { Op, Position } from '@shared/ops'
 import { detectDirection, toArabicIndic, visualRuns } from './bidi'
 import { PdfError } from './errors'
@@ -200,6 +201,11 @@ async function embedPicture(pdf: PDFDocument, bytes: Uint8Array): Promise<PDFIma
   const isJpg = bytes[0] === 0xff && bytes[1] === 0xd8
   try {
     if (isPng) return await pdf.embedPng(bytes)
+    // A phone photo stored sideways (EXIF orientation) is turned upright first, as its preview shows it (§61).
+    if (isJpg && exifOrientation(bytes) !== 1) {
+      const { default: sharp } = await import('sharp')
+      return await pdf.embedJpg(new Uint8Array(await sharp(bytes).rotate().jpeg({ quality: 95 }).toBuffer()))
+    }
     if (isJpg) return await pdf.embedJpg(bytes)
     // Other formats MuPDF reads (BMP, GIF, TIFF, PNM) are converted to PNG through it.
     const image = new mupdf.Image(bytes)

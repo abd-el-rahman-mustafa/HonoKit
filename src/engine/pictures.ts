@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { exifOrientation, orientationTurn } from '@shared/exif'
 import { PdfError } from './errors'
 import { free, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
 import { safeRedact } from './saferedact'
@@ -731,6 +732,14 @@ function overlapShare(a: Box, b: Box): number {
  * PNGs (it wrote no soft mask for the ones MuPDF and browsers produce), which turned a
  * signature's empty background into a black box. MuPDF keeps the alpha as a soft mask.
  */
+/** The picture's unit square turned clockwise by that many degrees, still in the unit square. */
+const TURNS: Record<0 | 90 | 180 | 270, mupdf.Matrix | null> = {
+  0: null,
+  90: [0, -1, 1, 0, 0, 1],
+  180: [-1, 0, 0, -1, 1, 1],
+  270: [0, 1, -1, 0, 1, 0]
+}
+
 function draw(doc: PdfDoc, pageIndex: number, picture: Uint8Array | mupdf.Image, place: { rect: Box } | { matrix: mupdf.Matrix; clip?: Box }, opacity = 1): void {
   const frame = pageFrame(doc, pageIndex)
   const own = !(picture instanceof mupdf.Image)
@@ -768,10 +777,13 @@ function draw(doc: PdfDoc, pageIndex: number, picture: Uint8Array | mupdf.Image,
     gs.put('GS0', alpha)
     resources.put('ExtGState', gs)
     // The overlay page is the displayed page with its origin at the bottom-left.
-    const m: mupdf.Matrix =
+    const placed: mupdf.Matrix =
       'rect' in place
         ? [place.rect[2] - place.rect[0], 0, 0, place.rect[3] - place.rect[1], place.rect[0], frame.height - place.rect[3]]
         : mupdf.Matrix.concat(place.matrix, [1, 0, 0, -1, 0, frame.height])
+    // A phone photo stored sideways (EXIF orientation) is placed as it was taken, as its preview shows it (§61).
+    const turn = own ? TURNS[orientationTurn(exifOrientation(picture))] : null
+    const m = turn ? mupdf.Matrix.concat(turn, placed) : placed
     // A picture its frame cropped stays cropped: the visible part only, at its new place.
     const c = 'clip' in place && place.clip ? place.clip : null
     const clip = c ? `${num(c[0])} ${num(frame.height - c[3])} ${num(c[2] - c[0])} ${num(c[3] - c[1])} re W n ` : ''

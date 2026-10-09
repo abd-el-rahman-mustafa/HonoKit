@@ -76,6 +76,9 @@ function picture(b: PictureBlock, contentWidth: number, pageWidth: number, pageB
   })
 }
 
+/** The most columns a Word table may have. */
+const WORD_COLUMNS = 63
+
 /** Word's default cell margins, left and right together (5.4 pt each). */
 const CELL_MARGINS = 10.8
 
@@ -127,7 +130,13 @@ export async function writeDocx(model: DocModel, options: DocxOptions): Promise<
       const breakHere = options.pageBreaks && pi > 0 && bi === 0
       if (b.kind === 'paragraph') children.push(paragraph(b, breakHere))
       else if (b.kind === 'picture') children.push(picture(b, contentWidth, page.width, breakHere))
-      else {
+      else if (b.columns.length > WORD_COLUMNS) {
+        // Word opens no table wider than this: the cells' text and pictures follow row by row.
+        if (breakHere) children.push(new Paragraph({ pageBreakBefore: true }))
+        for (const row of b.rows)
+          for (const cell of row)
+            for (const i of [...cell.paragraphs, ...cell.pictures].sort((x, y) => x.box[1] - y.box[1])) children.push(i.kind === 'paragraph' ? paragraph({ ...i, heading: 0 }) : picture(i, contentWidth, 0, false, b.rtl))
+      } else {
         if (breakHere) children.push(new Paragraph({ pageBreakBefore: true }))
         children.push(table(b))
         // Word joins two tables that touch; a paragraph keeps them apart.
