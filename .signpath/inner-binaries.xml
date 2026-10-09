@@ -2,17 +2,17 @@
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <parameters>
     <parameter name="version" required="true" />     <!-- 0.8.0: uninstaller ProductVersion -->
-    <parameter name="exeVersion" required="true" />  <!-- 0.8.0.0: HonoPDF.exe ProductVersion -->
+    <parameter name="exeVersion" required="true" />  <!-- 0.8.0.0: HonoKit.exe ProductVersion -->
   </parameters>
   <zip-file>
-    <pe-file path="app/HonoPDF.exe"
-             product-name="HonoPDF" product-version="${exeVersion}"
-             company-name="HonoPDF contributors">
+    <pe-file path="app/HonoKit.exe"
+             product-name="HonoKit" product-version="${exeVersion}"
+             company-name="HonoKit contributors">
       <authenticode-sign />
     </pe-file>
-    <pe-file path="uninstaller/HonoPDF-uninstaller.exe"
-             product-name="HonoPDF" product-version="${version}"
-             company-name="HonoPDF contributors">
+    <pe-file path="uninstaller/HonoKit-uninstaller.exe"
+             product-name="HonoKit" product-version="${version}"
+             company-name="HonoKit contributors">
       <authenticode-sign />
     </pe-file>
   </zip-file>

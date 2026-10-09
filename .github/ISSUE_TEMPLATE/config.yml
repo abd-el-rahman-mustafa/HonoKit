@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/abd-el-rahman-mustafa/HonoKit/security/advisories/new
     about: Please do not open a public issue for a security problem. · لا تفتح بلاغًا علنيًا لمشكلة أمنية.
   - name: Download HonoKit · تنزيل HonoKit
-    url: https://github.com/abd-el-rahman-mustafa/HonoKit-Releases/releases/latest
+    url: https://github.com/abd-el-rahman-mustafa/HonoKit/releases/latest
     about: The latest installers for Windows. · أحدث نسخ التثبيت لنظام Windows.

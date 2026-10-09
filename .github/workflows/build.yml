@@ -121,13 +121,13 @@ jobs:
         shell: pwsh
         env:
           POWERPDF_UNINSTALLER_MODE: capture
-          POWERPDF_UNINSTALLER_FILE: ${{ runner.temp }}\signpath\inner\uninstaller\HonoPDF-uninstaller.exe
+          POWERPDF_UNINSTALLER_FILE: ${{ runner.temp }}\signpath\inner\uninstaller\HonoKit-uninstaller.exe
         run: |
           npx electron-builder --win nsis --x64 --publish never `
             --config electron-builder.signpath.cjs
           if (-not (Test-Path $env:POWERPDF_UNINSTALLER_FILE)) { throw 'uninstaller was not captured' }
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\signpath\inner\app" | Out-Null
-          Copy-Item release\win-unpacked\HonoPDF.exe "$env:RUNNER_TEMP\signpath\inner\app\HonoPDF.exe"
+          Copy-Item release\win-unpacked\HonoKit.exe "$env:RUNNER_TEMP\signpath\inner\app\HonoKit.exe"
           # the pass-1 installer is thrown away
           Remove-Item release\*.exe, release\*.blockmap, release\latest.yml -ErrorAction SilentlyContinue
 
@@ -141,7 +141,7 @@ jobs:
           retention-days: 1
           overwrite: true
 
-      - name: SignPath request 1 of 2 - HonoPDF.exe and uninstaller
+      - name: SignPath request 1 of 2 - HonoKit.exe and uninstaller
         id: sign-inner
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
@@ -160,12 +160,12 @@ jobs:
             version: ${{ toJSON(steps.ver.outputs.version) }}
             exeVersion: ${{ toJSON(format('{0}.0', steps.ver.outputs.version)) }}
 
-      - name: Put the signed HonoPDF.exe back and check both signatures
+      - name: Put the signed HonoKit.exe back and check both signatures
         shell: pwsh
         run: |
           $signed = "$env:RUNNER_TEMP\signpath\inner-signed"
-          Copy-Item "$signed\app\HonoPDF.exe" release\win-unpacked\HonoPDF.exe -Force
-          foreach ($f in @('release\win-unpacked\HonoPDF.exe', "$signed\uninstaller\HonoPDF-uninstaller.exe")) {
+          Copy-Item "$signed\app\HonoKit.exe" release\win-unpacked\HonoKit.exe -Force
+          foreach ($f in @('release\win-unpacked\HonoKit.exe', "$signed\uninstaller\HonoKit-uninstaller.exe")) {
             $s = Get-AuthenticodeSignature $f
             Write-Host "$f : $($s.Status) $($s.SignerCertificate.Subject)"
             if ($null -eq $s.SignerCertificate) { throw "$f is not signed" }
@@ -179,7 +179,7 @@ jobs:
         shell: pwsh
         env:
           POWERPDF_UNINSTALLER_MODE: inject
-          POWERPDF_UNINSTALLER_FILE: ${{ runner.temp }}\signpath\inner-signed\uninstaller\HonoPDF-uninstaller.exe
+          POWERPDF_UNINSTALLER_FILE: ${{ runner.temp }}\signpath\inner-signed\uninstaller\HonoKit-uninstaller.exe
         run: |
           npx electron-builder --win nsis portable --x64 --publish never `
             --prepackaged release/win-unpacked `
@@ -187,7 +187,7 @@ jobs:
           $v = '${{ steps.ver.outputs.version }}'
           $stage = "$env:RUNNER_TEMP\signpath\installers"
           New-Item -ItemType Directory -Force $stage | Out-Null
-          Copy-Item "release\HonoPDF-Setup-$v.exe", "release\HonoPDF-$v-portable.exe" $stage
+          Copy-Item "release\HonoKit-Setup-$v.exe", "release\HonoKit-$v-portable.exe" $stage
 
       - name: Upload unsigned installers
         id: up-installers
@@ -219,9 +219,9 @@ jobs:
         run: |
           $v = '${{ steps.ver.outputs.version }}'
           $signed = "$env:RUNNER_TEMP\signpath\installers-signed"
-          Copy-Item "$signed\HonoPDF-Setup-$v.exe", "$signed\HonoPDF-$v-portable.exe" release -Force
+          Copy-Item "$signed\HonoKit-Setup-$v.exe", "$signed\HonoKit-$v-portable.exe" release -Force
           node scripts/refresh-win-update-info.mjs release
-          foreach ($f in @("release\HonoPDF-Setup-$v.exe", "release\HonoPDF-$v-portable.exe", 'release\win-unpacked\HonoPDF.exe')) {
+          foreach ($f in @("release\HonoKit-Setup-$v.exe", "release\HonoKit-$v-portable.exe", 'release\win-unpacked\HonoKit.exe')) {
             $s = Get-AuthenticodeSignature $f
             Write-Host "$f : $($s.Status) $($s.SignerCertificate.Subject)"
             if ($null -eq $s.SignerCertificate) { throw "$f is not signed" }
@@ -285,13 +285,12 @@ jobs:
             exit 1
           fi
 
-      # Into the public releases repository (decisions §73), always marked "Latest": the updater
-      # reads only that release, and Android's releases there are never marked Latest.
-      # RELEASES_TOKEN: a fine-grained token with Contents read/write on HonoKit-Releases only.
+      # Into this repository's releases, always marked "Latest": installed copies read only that
+      # release (electron-updater). The job's own token can write releases here (contents: write).
       - name: Create the release and attach the files
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          GH_REPO: abd-el-rahman-mustafa/HonoKit-Releases
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
           ## Download

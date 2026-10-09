@@ -4,14 +4,14 @@
     <parameter name="version" required="true" />
   </parameters>
   <zip-file>
-    <pe-file path="HonoPDF-Setup-*.exe"
-             product-name="HonoPDF" product-version="${version}"
-             company-name="HonoPDF contributors">
+    <pe-file path="HonoKit-Setup-*.exe"
+             product-name="HonoKit" product-version="${version}"
+             company-name="HonoKit contributors">
       <authenticode-sign />
     </pe-file>
-    <pe-file path="HonoPDF-*-portable.exe"
-             product-name="HonoPDF" product-version="${version}"
-             company-name="HonoPDF contributors">
+    <pe-file path="HonoKit-*-portable.exe"
+             product-name="HonoKit" product-version="${version}"
+             company-name="HonoKit contributors">
       <authenticode-sign />
     </pe-file>
   </zip-file>
