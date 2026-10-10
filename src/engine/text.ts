@@ -111,8 +111,16 @@ export function foldChar(c: string, matchCase = false): string {
   // Alef maksura to yeh: people type either.
   if (c === 'ى') return 'ي'
   if (c === ' ') return ' '
+  // Turkish dotted İ and dotless ı fold with I and i, one letter for one: toLowerCase turns İ
+  // into i and a combining dot, and ı has no case pair, so "istanbul" missed "İSTANBUL".
+  if (!matchCase && (c === 'İ' || c === 'ı')) return 'i'
   const n = c.normalize('NFKC')
   return matchCase ? n : n.toLowerCase()
+}
+
+/** Folds a whole query: each character as foldChar, and runs of white space as one space. */
+export function foldQuery(s: string, matchCase = false): string {
+  return foldString(s, matchCase).replace(/\s+/g, ' ').trim()
 }
 
 export function foldString(s: string, matchCase = false): string {
@@ -135,14 +143,17 @@ const WORD = /[\p{L}\p{N}\p{M}_]/u
  * (or a line's glyphs); each match is the first and last unit it covers.
  */
 export function matchUnits(units: string[], query: string, options: MatchOptions = {}): Array<[number, number]> {
-  const needle = foldString(query, options.matchCase).trim()
+  const needle = foldQuery(query, options.matchCase)
   if (!needle) return []
   let folded = ''
   const owner: number[] = []
   units.forEach((u, i) => {
     const f = foldString(u, options.matchCase)
     for (let k = 0; k < f.length; k++) {
-      folded += f[k]
+      // A run of spaces or tabs on the page reads as one space, as the query does.
+      const space = /\s/.test(f[k]!)
+      if (space && folded.endsWith(' ')) continue
+      folded += space ? ' ' : f[k]
       owner.push(i)
     }
   })

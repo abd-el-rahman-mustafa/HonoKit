@@ -66,8 +66,11 @@ const TYPES: Record<string, MarkupKind> = {
   FreeText: 'textbox'
 }
 
-/** Annotations this editor lists; widgets (form fields), links and popups are not markup. */
-const SKIP = new Set(['Widget', 'Link', 'Popup'])
+/**
+ * Annotations this editor lists; widgets (form fields), links and popups are not markup, nor are
+ * media, 3D, printer marks and watermarks (ISO 32000-2 §12.5.6), which Acrobat keeps out of Comments.
+ */
+const SKIP = new Set(['Widget', 'Link', 'Popup', 'Screen', 'Movie', 'RichMedia', '3D', 'PrinterMark', 'TrapNet', 'Watermark'])
 
 function hex(c: number[]): string {
   if (c.length === 1) c = [c[0]!, c[0]!, c[0]!]

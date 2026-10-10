@@ -76,7 +76,8 @@ const westernDigits = (s: string): string => s.replace(/[٠-٩]/g, (d) => String
  */
 export function findToRedact(doc: PdfDoc, query: { words: string[]; patterns: RedactPattern[]; wholeWords: boolean }): RedactHit[] {
   const hits: RedactHit[] = []
-  const fold = (s: string): string => westernDigits(s).replace(/[ً-ٰٟـ]/g, '').toLowerCase()
+  // Turkish İ and ı fold to i one for one (toLowerCase makes İ two characters); white space as one space.
+  const fold = (s: string): string => westernDigits(s).replace(/[ً-ٰٟـ]/g, '').replace(/[İı]/g, 'i').toLowerCase().replace(/\s+/g, ' ')
   const words = query.words.map((w) => w.trim()).filter(Boolean)
   for (let p = 0; p < doc.countPages(); p++) {
     for (const line of extractLines(doc, p)) {
@@ -86,6 +87,8 @@ export function findToRedact(doc: PdfDoc, query: { words: string[]; patterns: Re
       line.glyphs.forEach((g, i) => {
         const f = fold(g.c)
         for (let k = 0; k < f.length; k++) {
+          // A phrase still matches where the page has two spaces in a row.
+          if (f[k] === ' ' && folded.endsWith(' ')) continue
           folded += f[k]
           map.push(i)
         }
