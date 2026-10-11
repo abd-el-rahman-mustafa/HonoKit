@@ -244,6 +244,19 @@ describe('duplicate gives each copy its own page', () => {
     })
   })
 
+  it('extracting a page twice in one selection gives each its own annotations', async () => {
+    withDoc(final(keepPages(await annotatedPdf(), [0, 0])), (d) => {
+      const first = annotsOf(d, 0)
+      const second = annotsOf(d, 1)
+      expect(second.length).toBe(first.length)
+      const nums = new Set(first.map((a) => a.asIndirect()))
+      for (const a of second) {
+        expect(nums.has(a.asIndirect())).toBe(false)
+        if (!a.get('P').isNull()) expect(a.get('P').asIndirect()).toBe(d.findPage(1).asIndirect())
+      }
+    })
+  })
+
   it('copies the page’s annotations and widgets, pointing at the copy', async () => {
     const dup = duplicatePages(await annotatedPdf(), [0])
     withDoc(final(dup), (d) => {

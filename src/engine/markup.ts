@@ -119,6 +119,16 @@ function thread(obj: mupdf.PDFObject): Pick<MarkupInfo, 'id' | 'replyTo' | 'stat
   return out
 }
 
+/**
+ * A comment's text with its line breaks. Acrobat saves them as CR ("first\r\rsecond"), which
+ * MuPDF's getContents drops and a web page does not break on: read /Contents and use LF.
+ */
+export function commentText(annot: mupdf.PDFAnnotation): string {
+  const raw = annot.getObject().get('Contents')
+  const text = raw.isString() ? raw.asString() : annot.getContents()
+  return text.replace(/\r\n?/g, '\n')
+}
+
 export function pageMarkups(doc: PdfDoc, pageIndex: number): MarkupInfo[] {
   const page = doc.loadPage(pageIndex) as mupdf.PDFPage
   try {
@@ -146,7 +156,7 @@ export function pageMarkups(doc: PdfDoc, pageIndex: number): MarkupInfo[] {
         box: [b[0], b[1], b[2], b[3]],
         colour,
         movable: kind !== 'highlight' && kind !== 'underline' && kind !== 'strikeout' && kind !== 'other',
-        text: safe(() => annot.getContents(), ''),
+        text: safe(() => commentText(annot), ''),
         author: safe(() => annot.getAuthor(), ''),
         // No /M: unknown (MuPDF answers 1970 for it, which showed as "20,000 days ago").
         modified: safe(() => (annot.getObject().get('M').isNull() ? 0 : Math.max(0, annot.getModificationDate().getTime() || 0)), 0),

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { runBatch } from '../src/worker/batch'
 import { free, openPdf } from '@engine/mupdf'
 import { extractText } from '@engine/text'
-import { makeLatinPdf } from './fixtures'
+import { makeLatinPdf, makeRestrictedPdf } from './fixtures'
 
 describe('batch workflows', () => {
   it('runs the steps over every file, writes new files, and keeps going past a bad one', async () => {
@@ -36,4 +36,14 @@ describe('batch workflows', () => {
     expect(existsSync(join(dir, 'out', 'b.docx'))).toBe(true)
     expect(word[0]!.output).toBe(join(dir, 'out', 'b.docx'))
   }, 60_000)
+
+  it('does not convert a file whose author does not allow copying its content', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hono-batch-'))
+    const f = join(dir, 'nocopy.pdf')
+    writeFileSync(f, await makeRestrictedPdf(1, { copy: false }))
+    const [r] = await runBatch([f], [{ kind: 'convert', format: 'txt' }], { folder: join(dir, 'out'), suffix: '' }, () => undefined)
+    expect(r!.output).toBeUndefined()
+    expect(r!.error).toMatch(/copying/)
+    expect(existsSync(join(dir, 'out', 'nocopy.txt'))).toBe(false)
+  })
 })

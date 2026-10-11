@@ -178,3 +178,27 @@ describe('protecting inside a session', () => {
     expect(open.rights.encrypted).toBe(false)
   })
 })
+
+/** docs/decisions.md §23: the author's "copy" right covers exporting the content, as in Acrobat. */
+describe('a file whose author does not allow copying', () => {
+  it('refuses to export its text or page pictures, but still prints', async () => {
+    const doc = await sessions.openFile(await file('nocopy.pdf', makeRestrictedPdf(2, { copy: false })))
+    expect(doc.rights.copy).toBe(false)
+    await expect(sessions.exportOffice(doc.id, { format: 'txt', pages: null, pageBreaks: false, removeTatweel: false, digits: 'keep' }, join(dir, 'out.txt'))).rejects.toMatchObject({ code: 'restricted' })
+    await expect(sessions.exportImages(doc.id, [0], 'png', 72, join(dir, 'png'))).rejects.toMatchObject({ code: 'restricted' })
+    expect(readdirSync(dir)).not.toContain('out.txt')
+    // Printing renders pages as pictures too; that is the print right, not copying.
+    expect(await sessions.exportImages(doc.id, [0], 'jpeg', 72, join(dir, 'print'), undefined, 'print')).toHaveLength(1)
+  })
+
+  it('exports once the permissions password is given', async () => {
+    const doc = await sessions.openFile(await file('nocopy.pdf', makeRestrictedPdf(1, { copy: false })))
+    expect(sessions.authorize(doc.id, 'owner-secret').rights.copy).toBe(true)
+    expect(await sessions.exportImages(doc.id, [0], 'png', 72, join(dir, 'png'))).toHaveLength(1)
+  })
+
+  it('still exports a file that allows copying', async () => {
+    const doc = await sessions.openFile(await file('copy.pdf', makeRestrictedPdf(1)))
+    expect(await sessions.exportImages(doc.id, [0], 'png', 72, join(dir, 'png'))).toHaveLength(1)
+  })
+})

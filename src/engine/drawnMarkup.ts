@@ -421,7 +421,8 @@ export async function adoptFreeText(doc: PdfDoc, page: mupdf.PDFPage, annot: mup
   }
   const size = da.size > 0 ? da.size : 12
   const contents = obj.get('Contents')
-  const text = change.text ?? (contents.isString() ? contents.asString() : '')
+  // Acrobat saves line breaks as CR; the text box breaks lines at LF.
+  const text = change.text ?? (contents.isString() ? contents.asString().replace(/\r\n?/g, '\n') : '')
   let intent = ''
   try {
     intent = annot.getIntent() ?? ''

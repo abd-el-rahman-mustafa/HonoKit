@@ -9,6 +9,11 @@ export function exifOrientation(bytes: Uint8Array): number {
   let i = 2
   while (i + 4 < bytes.length && bytes[i] === 0xff) {
     const marker = bytes[i + 1]!
+    // Any number of 0xFF fill bytes may come before a marker.
+    if (marker === 0xff) {
+      i++
+      continue
+    }
     const length = (bytes[i + 2]! << 8) | bytes[i + 3]!
     if (marker === 0xe1 && bytes[i + 4] === 0x45 && bytes[i + 5] === 0x78 && bytes[i + 6] === 0x69 && bytes[i + 7] === 0x66) {
       const tiff = i + 10

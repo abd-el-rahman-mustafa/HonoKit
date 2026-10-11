@@ -4,9 +4,9 @@ import { basename, dirname, extname, join } from 'node:path'
 import type { BatchStep } from '@shared/ipc'
 import type { OpInput } from '@shared/ops'
 import { PdfError } from '@engine/errors'
-import { free, needsOpenPassword, openPdf, saveBytes, SAVE_FINAL } from '@engine/mupdf'
+import { free, needsOpenPassword, openPdf, rightsOf, saveBytes, SAVE_FINAL } from '@engine/mupdf'
 import { exportOffice } from '@engine/office'
-import { applyOperation } from '@ops/index'
+import { applyOperation, assertCanCopy } from '@ops/index'
 
 /**
  * Batch workflows (docs/decisions.md §54), as Acrobat's Action Wizard and iLovePDF's batch: the
@@ -58,8 +58,10 @@ export async function runBatch(files: string[], steps: BatchStep[], output: { fo
       const doc = openPdf(bytes)
       const locked = needsOpenPassword(doc)
       const pages = doc.countPages()
+      const rights = locked ? null : rightsOf(doc)
       free(doc)
       if (locked) throw new PdfError('password-required', 'It needs a password to open.')
+      if (convert && rights) assertCanCopy(rights)
       for (const step of changes) {
         const op = opFor(step, pages)
         if (op) bytes = (await applyOperation(bytes, op)).bytes

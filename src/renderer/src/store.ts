@@ -316,6 +316,12 @@ export function toast(kind: Toast['kind'], text: string, action?: Toast['action'
   setTimeout(() => dismissToast(id), kind === 'error' ? 9000 : 5000)
 }
 
+/** Copies text taken from the document, unless its author does not allow copying (§23, as Acrobat). */
+export function copyDocumentText(view: DocView, text: string): void {
+  if (!view.info.rights.copy) return toast('error', t('error.noCopy'))
+  void window.api.copyText(text).then(() => toast('success', t('copied')))
+}
+
 export function dismissToast(id: number): void {
   set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) }))
 }

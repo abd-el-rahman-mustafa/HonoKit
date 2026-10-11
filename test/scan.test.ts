@@ -101,6 +101,13 @@ describe('scanning photos (§61)', () => {
     expect(darkness(out.bytes, 0.6, 0.6, 0.9, 0.9)).toBeLessThan(0.02)
   })
 
+  it('reads the orientation past fill bytes before a marker', () => {
+    const sideways = withOrientation(photo(64, 48, [[6, 5], [58, 5], [58, 43], [6, 43]]), 6)
+    // JPEG allows any number of 0xFF fill bytes before a marker (ITU T.81 B.1.1.2).
+    const padded = new Uint8Array([0xff, 0xd8, 0xff, 0xff, 0xff, ...sideways.subarray(3)])
+    expect(exifOrientation(padded)).toBe(6)
+  })
+
   it('turns a phone photo stored sideways upright (EXIF orientation 6)', () => {
     const sideways = withOrientation(photo(640, 480, [[60, 50], [580, 50], [580, 430], [60, 430]]), 6)
     expect(exifOrientation(sideways)).toBe(6)

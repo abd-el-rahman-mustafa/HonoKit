@@ -25,7 +25,7 @@ import { free, needsOpenPassword, openPdf, rightsOf, saveBytes, SAVE_FINAL, type
 import { keepPages, mergePdfs, splitByRanges, blankPdf } from '@engine/pages'
 import { pageGeometry, renderPage, whiteMargins, type RenderedPage } from '@engine/render'
 import { extractLines, searchLines, selectText, type Selection, type SelectUnit, type TextLine } from '@engine/text'
-import { applyOperation, type OpContext } from '@ops/index'
+import { applyOperation, assertCanCopy, type OpContext } from '@ops/index'
 import { detectFold, detectPicture, idCardPage, scanBookPicture, scanPicture, type Corners, type ScannedImage } from '@engine/scan'
 import type { ScanItem } from '@shared/ipc'
 
@@ -494,6 +494,7 @@ export class Sessions {
 
   async exportOffice(id: string, options: { format: OfficeFormat; pages: number[] | null; pageBreaks: boolean; removeTatweel: boolean; digits: 'keep' | 'western' | 'arabic'; sheets?: 'page' | 'tables' }, path: string): Promise<{ path: string; pages: number; paragraphs: number; tables: number; pictures: number }> {
     const s = this.get(id)
+    assertCanCopy(rightsOf(s.doc))
     const folder = `${basename(path, extname(path))}_pictures`
     const { pages, ...rest } = options
     const r = await exportOffice(s.bytes, { ...rest, ...(pages ? { pages } : {}), pictureFolder: folder }, s.password)
@@ -671,6 +672,8 @@ export class Sessions {
 
   async exportImages(id: string, pages: number[] | null, format: 'png' | 'jpeg', dpi: number, folder: string, progress?: (f: number) => void, annotations: boolean | 'print' | 'print-none' = true): Promise<string[]> {
     const s = this.get(id)
+    // Printing renders pages as pictures too; that is the print right, not copying.
+    if (annotations !== 'print' && annotations !== 'print-none') assertCanCopy(rightsOf(s.doc))
     await mkdir(folder, { recursive: true })
     const list = pages ?? Array.from({ length: s.doc.countPages() }, (_, i) => i)
     const written: string[] = []

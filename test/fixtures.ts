@@ -136,10 +136,11 @@ export async function makeFormWithBookmarks(pageCount: number): Promise<Uint8Arr
  * Encrypted with no open password and a permissions password: the "restricted" PDF
  * that opens for anyone but forbids changes. Two of the owner's real files are like this.
  */
-export async function makeRestrictedPdf(pageCount: number, allow: { edit?: boolean; assemble?: boolean } = {}, ownerPassword = 'owner-secret'): Promise<Uint8Array> {
+export async function makeRestrictedPdf(pageCount: number, allow: { edit?: boolean; assemble?: boolean; copy?: boolean } = {}, ownerPassword = 'owner-secret'): Promise<Uint8Array> {
   const doc = new mupdf.PDFDocument(await makeLatinPdf(pageCount))
-  // Print and copy allowed; edit (bit 4) and assemble (bit 11) only when asked.
-  let p = 0xfffff0c0 | 4 | 16 | 2048
+  // Print and copy (bit 5, unless copy: false) allowed; edit (bit 4) and assemble (bit 11) only when asked.
+  let p = 0xfffff0c0 | 4 | 2048
+  if (allow.copy !== false) p |= 16
   if (allow.edit) p |= 8
   if (allow.assemble) p |= 1024
   const out = new Uint8Array(doc.saveToBuffer(`encrypt=aes-256,user-password=,owner-password=${ownerPassword},permissions=${p | 0}`).asUint8Array())

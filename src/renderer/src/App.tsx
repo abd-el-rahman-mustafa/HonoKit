@@ -19,7 +19,7 @@ import { GlobalBar, pickPictureToPlace, QuickTools, ReadBar, RightRail, TitleBar
 import { PictureViewer } from './components/PictureViewer'
 import { SidePanel } from './components/SidePanels'
 import { Viewer } from './components/Viewer'
-import { activeView, closeDoc, deletePagesAsking, goToPage, openAny, openAnyWithPicker, quickTool, redo, save, setDialog, t, toast, undo, updateView, useStore, useT, type DocView, CONVERTIBLE, createPdfFrom, isImageTool } from './store'
+import { activeView, closeDoc, copyDocumentText, deletePagesAsking, goToPage, openAny, openAnyWithPicker, quickTool, redo, save, setDialog, toast, undo, updateView, useStore, useT, type DocView, CONVERTIBLE, createPdfFrom, isImageTool } from './store'
 import { ToolPanel } from './tools/ToolPanel'
 
 function useThemeAndLanguage(): void {
@@ -84,8 +84,7 @@ function useShortcuts(): void {
         } else quickTool(view, 'pen')
       } else if (view && mod && k === 'c' && !typing && view.selection) {
         e.preventDefault()
-        void window.api.copyText(view.selection.text)
-        toast('success', t('copied'))
+        copyDocumentText(view, view.selection.text)
       } else if (view && mod && k === 'p') {
         // Print (§60): HonoPDF's own dialog, not the window's.
         e.preventDefault()

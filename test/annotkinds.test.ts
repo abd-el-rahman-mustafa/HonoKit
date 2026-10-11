@@ -36,3 +36,24 @@ describe('only comments are listed as comments', () => {
     }
   })
 })
+
+describe('comment text', () => {
+  it('shows line breaks saved as CR or CRLF (as Acrobat writes them) as line breaks', async () => {
+    const src = openPdf(await withAnnotations(['Text', 'FreeText']))
+    let bytes: Uint8Array
+    try {
+      const annots = src.findPage(0).get('Annots')
+      annots.get(0).put('Contents', src.newString('first line\r\rsecond paragraph'))
+      annots.get(1).put('Contents', src.newString('one\r\ntwo'))
+      bytes = saveBytes(src)
+    } finally {
+      free(src)
+    }
+    const doc = openPdf(bytes)
+    try {
+      expect(pageMarkups(doc, 0).map((m) => m.text)).toEqual(['first line\n\nsecond paragraph', 'one\ntwo'])
+    } finally {
+      free(doc)
+    }
+  })
+})

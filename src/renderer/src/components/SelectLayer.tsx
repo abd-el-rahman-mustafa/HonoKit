@@ -1,7 +1,7 @@
 import { Copy, Highlighter, SquarePen, Strikethrough, Underline } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { PageLink } from '@shared/ipc'
-import { apply, goToDestination, openTool, openWebLink, toast, updateView, useT, type DocView } from '../store'
+import { apply, copyDocumentText, goToDestination, openTool, openWebLink, updateView, useT, type DocView } from '../store'
 import { openMenu } from './ContextMenu'
 import { px } from './editGeometry'
 import { pageEntries } from './menus'
@@ -113,7 +113,7 @@ export function SelectLayer({ view, page, scale }: { view: DocView; page: number
         openMenu(e, [
           ...(selection
             ? [
-                { label: t('copy'), icon: <Copy size={14} />, shortcut: 'Ctrl+C', onClick: () => void window.api.copyText(selection.text).then(() => toast('success', t('copied'))) },
+                { label: t('copy'), icon: <Copy size={14} />, shortcut: 'Ctrl+C', onClick: () => copyDocumentText(view, selection.text) },
                 { label: t('markup.highlight'), icon: <Highlighter size={14} />, onClick: () => mark('highlight') },
                 { label: t('markup.underline'), icon: <Underline size={14} />, onClick: () => mark('underline') },
                 { label: t('markup.strikeout'), icon: <Strikethrough size={14} />, onClick: () => mark('strikeout') },
@@ -147,10 +147,7 @@ export function SelectLayer({ view, page, scale }: { view: DocView; page: number
           </MiniButton>
           <MiniButton
             label={`${t('copy')} (Ctrl+C)`}
-            onClick={() => {
-              void window.api.copyText(selection.text)
-              toast('success', t('copied'))
-            }}
+            onClick={() => copyDocumentText(view, selection.text)}
           >
             <Copy size={15} />
           </MiniButton>

@@ -111,6 +111,13 @@ export function assertAllowed(op: OpName, rights: Rights): void {
   }
 }
 
+/** Copying or exporting the content (text, page pictures, Office files) needs the author's "copy" right, as in Acrobat. */
+export function assertCanCopy(rights: Rights): void {
+  if (!rights.copy) {
+    throw withKey(new PdfError('restricted', "The author of this PDF does not allow copying its content. Enter the file's permissions password to copy or export it."), 'error.noCopy')
+  }
+}
+
 export async function applyOperation(bytes: Uint8Array, input: OpInput, ctx: OpContext = {}): Promise<OpResult> {
   const op = parseOp(input)
   if (ctx.signal?.aborted) throw new PdfError('cancelled', 'Cancelled.')
