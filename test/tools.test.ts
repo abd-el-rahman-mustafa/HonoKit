@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { compressPdf } from '@engine/compress'
 import { PdfError } from '@engine/errors'
 import { imagesToPdf, pdfToImages } from '@engine/images'
-import { free, mupdf, openPdf } from '@engine/mupdf'
+import { free, mupdf, openPdf, rightsOf } from '@engine/mupdf'
 import { pageCount } from '@engine/pages'
 import { isEncrypted, permissionsValue, protectPdf, unlockPdf } from '@engine/security'
 import { extractText } from '@engine/text'
@@ -59,6 +59,41 @@ describe('passwords', () => {
   it('accepts a password with non-ASCII characters', async () => {
     const locked = protectPdf(await makeLatinPdf(1), { userPassword: 'كلمة-سر', allowPrint: true, allowCopy: true, allowModify: true, allowAnnotate: true })
     expect(() => openPdf(locked, 'كلمة-سر')).not.toThrow()
+  })
+
+  const all = { allowPrint: true, allowCopy: true, allowModify: true, allowAnnotate: true }
+  const decomposed = 'cafe' + String.fromCodePoint(0x301)
+  const precomposed = 'caf' + String.fromCodePoint(0xe9)
+
+  it('refuses an open password that would also lift the restrictions', async () => {
+    const pdf = await makeLatinPdf(1)
+    const restricted = { allowPrint: true, allowCopy: false, allowModify: false, allowAnnotate: false }
+    expect(() => protectPdf(pdf, { userPassword: 'secret', ownerPassword: 'secret', ...restricted })).toThrowError(expect.objectContaining({ code: 'bad-arguments' }))
+    // Readers count only the first 127 bytes: these two differ after them, so they are one password.
+    const long = 'ب'.repeat(64)
+    expect(() => protectPdf(pdf, { userPassword: long + 'X', ownerPassword: long + 'Y', ...restricted })).toThrowError(expect.objectContaining({ code: 'bad-arguments' }))
+    expect(() => protectPdf(pdf, { userPassword: precomposed, ownerPassword: decomposed, ...restricted })).toThrowError(expect.objectContaining({ code: 'bad-arguments' }))
+    expect(() => protectPdf(pdf, { userPassword: String.fromCodePoint(0xad), ...restricted })).toThrowError(expect.objectContaining({ code: 'bad-arguments' }))
+    const doc = openPdf(protectPdf(pdf, { userPassword: 'ب'.repeat(63), ownerPassword: 'owner', ...restricted }), 'ب'.repeat(63))
+    try {
+      expect(rightsOf(doc).copy).toBe(false)
+    } finally {
+      free(doc)
+    }
+  })
+
+  it('keys the file on the password as other readers prepare it, and opens either form', async () => {
+    const locked = protectPdf(await makeLatinPdf(1), { userPassword: decomposed, ...all })
+    const raw = mupdf.Document.openDocument(locked, 'application/pdf')
+    try {
+      expect(raw.authenticatePassword(precomposed)).toBeTruthy()
+    } finally {
+      raw.destroy()
+    }
+    expect(() => openPdf(locked, decomposed)).not.toThrow()
+    const nbsp = protectPdf(await makeLatinPdf(1), { userPassword: 'open' + String.fromCodePoint(0xa0) + 'sesame', ...all })
+    expect(() => openPdf(nbsp, 'open sesame')).not.toThrow()
+    expect(() => openPdf(nbsp, 'open' + String.fromCodePoint(0xa0) + 'sesame')).not.toThrow()
   })
 
   it('unlocks into a file that needs no password', async () => {

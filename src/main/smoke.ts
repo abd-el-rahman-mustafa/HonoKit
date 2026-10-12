@@ -346,6 +346,28 @@ export async function runSmoke(window: BrowserWindow, openFiles: (paths: string[
       if (await clickIn('[data-global-bar]', labels.allTools ?? 'All tools')) await wait(300)
       await shot('03b-all-tools')
 
+      // Protect: the same password for opening and for the permissions is refused before applying.
+      if (await clickIn('[data-all-tools]', labels.protect ?? 'Protect PDF')) {
+        await wait(300)
+        const fill = (index: number, value: string): Promise<unknown> =>
+          js(`(() => {
+            const input = document.querySelectorAll('[data-tool-panel] input[type=password]')[${index}]
+            if (!input) return false
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)})
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+            return true
+          })()`)
+        await fill(0, 'سر-2026')
+        await fill(1, 'سر-2026')
+        await js("document.querySelector('[data-tool-panel] button[aria-expanded]')?.click()")
+        await wait(300)
+        await fill(2, 'سر-2026')
+        await shot('03e-protect-same-password')
+        steps.push(`protect: same password blocks Protect: ${await js<boolean>("!!document.querySelector('[data-tool-footer] button[disabled]')")}`)
+        await clickIn('[data-global-bar]', labels.allTools ?? 'All tools')
+        await wait(300)
+      }
+
       // A tool, end to end: open it from the All tools panel, fill it in (the preview follows), apply.
       if (await clickIn('[data-all-tools]', labels.watermark ?? 'Add watermark')) {
         await js(`(() => {

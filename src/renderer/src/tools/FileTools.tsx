@@ -31,7 +31,9 @@ export function ProtectTool({ view }: { view: DocView }) {
   const differ = again.length > 0 && again !== password
   const comma = password.includes(',') || owner.includes(',')
   const level = strength(password)
-  const ready = !!password && password === again && !comma
+  // The same password for both would make whoever opens the file its owner; the engine checks too.
+  const same = mode === 'viewing' && !!owner && owner.normalize('NFKC') === password.normalize('NFKC')
+  const ready = !!password && password === again && !comma && !same
   const op =
     mode === 'viewing'
       ? ({ op: 'protect', userPassword: password, ownerPassword: owner || undefined, ...allow } as const)
@@ -76,7 +78,7 @@ export function ProtectTool({ view }: { view: DocView }) {
           <Check checked={allow.allowModify} onChange={(v) => setAllow({ ...allow, allowModify: v })} label={t('allowModify')} />
           <Check checked={allow.allowAnnotate} onChange={(v) => setAllow({ ...allow, allowAnnotate: v })} label={t('allowAnnotate')} />
           {mode === 'viewing' && (
-            <Field label={t('ownerPassword')} hint={t('ownerPasswordHint')}>
+            <Field label={t('ownerPassword')} hint={same ? undefined : t('ownerPasswordHint')} error={same ? t('passwordSame') : null}>
               <TextInput type="password" autoComplete="new-password" value={owner} onChange={(e) => setOwner(e.target.value)} />
             </Field>
           )}

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { PdfError } from './errors'
 import { free, isSigned, openPdf, saveBytes, SAVE_FINAL, type PdfDoc } from './mupdf'
+import { passwordBytes, preparedPassword } from './password'
 
 /** PDF permission bits (ISO 32000-1 table 22). Bits 7-8 and 13-32 are reserved and must be set. */
 const P = { print: 1 << 2, modify: 1 << 3, copy: 1 << 4, annotate: 1 << 5, fillForms: 1 << 8, accessibility: 1 << 9, assemble: 1 << 10, printHq: 1 << 11 }
@@ -29,8 +30,11 @@ export function permissionsValue(o: Pick<ProtectOptions, 'allowPrint' | 'allowCo
  * arguments found"). Refuse it up front with a reason a person can act on.
  */
 function assertUsablePassword(password: string, which: string): void {
-  if (password.includes(',')) throw new PdfError('bad-arguments', `The ${which} password cannot contain a comma.`)
-  if (password.length > 127) throw new PdfError('bad-arguments', `The ${which} password is too long (127 characters at most).`)
+  if (preparedPassword(password).includes(',')) throw new PdfError('bad-arguments', `The ${which} password cannot contain a comma.`)
+  // Readers key the file on the first 127 bytes (UTF-8) only: a longer open password could equal
+  // the permissions password where it counts, and opening with it would lift every restriction.
+  if (passwordBytes(password) > 127) throw new PdfError('bad-arguments', `The ${which} password is too long.`)
+  if (!preparedPassword(password)) throw new PdfError('bad-arguments', `The ${which} password has no characters a reader would use.`)
 }
 
 /**
@@ -55,11 +59,16 @@ export function protectPdf(bytes: Uint8Array, o: ProtectOptions, password?: stri
   if (!o.userPassword && !o.ownerPassword) throw new PdfError('bad-arguments', 'A password is required.')
   if (o.userPassword) assertUsablePassword(o.userPassword, 'open')
   if (o.ownerPassword) assertUsablePassword(o.ownerPassword, 'permissions')
-  const owner = o.ownerPassword || randomBytes(24).toString('base64url')
+  // The same password for both would make whoever opens the file its owner (with every right).
+  if (o.userPassword && o.ownerPassword && preparedPassword(o.userPassword) === preparedPassword(o.ownerPassword))
+    throw new PdfError('bad-arguments', 'The permissions password must be different from the open password.')
+  // Written as Acrobat keys it (SASLprep), so Acrobat opens it with the same text; we try both.
+  const user = preparedPassword(o.userPassword)
+  const owner = o.ownerPassword ? preparedPassword(o.ownerPassword) : randomBytes(24).toString('base64url')
   const doc = openPdf(bytes, password)
   try {
     refuseSigned(doc)
-    const options = [SAVE_FINAL, 'encrypt=aes-256', `user-password=${o.userPassword}`, `owner-password=${owner}`, `permissions=${permissionsValue(o)}`].join(',')
+    const options = [SAVE_FINAL, 'encrypt=aes-256', `user-password=${user}`, `owner-password=${owner}`, `permissions=${permissionsValue(o)}`].join(',')
     return saveBytes(doc, options)
   } finally {
     free(doc)

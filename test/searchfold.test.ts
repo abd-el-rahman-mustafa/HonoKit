@@ -54,6 +54,24 @@ describe('Find folds Turkish dotted and dotless i', () => {
   })
 })
 
+describe('Find folds Greek final sigma', () => {
+  const units = (s: string): string[] => [...s]
+  it('finds ΛΟΓΟΣ, λογος and λογοσ whichever sigma is typed', () => {
+    expect(matchUnits(units('λογος'), 'ΛΟΓΟΣ')).toEqual([[0, 4]])
+    expect(matchUnits(units('ΛΟΓΟΣ'), 'λογος')).toEqual([[0, 4]])
+    expect(matchUnits(units('λογος'), 'λογοσ')).toEqual([[0, 4]])
+    expect(matchUnits(units('ο λογος μας'), 'λογος', { wholeWords: true })).toEqual([[2, 6]])
+  })
+  it('keeps them apart when case must match', () => {
+    expect(matchUnits(units('λογος'), 'λογοσ', { matchCase: true })).toEqual([])
+    expect(matchUnits(units('λογος'), 'λογος', { matchCase: true })).toEqual([[0, 4]])
+  })
+  it.skipIf(!existsSync(ARIAL))('redacts a Greek word typed in capitals', async () => {
+    const bytes = await pdfWith(['Ο λογος της εταιρειας'], true)
+    expect(redactHits(bytes, ['ΛΟΓΟΣ'])).toEqual(['λογος'])
+  })
+})
+
 describe('Find matches a phrase across repeated spaces', () => {
   const units = (s: string): string[] => [...s]
   it('collapses runs of spaces and tabs on the page and in the query', () => {

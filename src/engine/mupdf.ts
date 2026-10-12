@@ -1,6 +1,7 @@
 import * as mupdf from 'mupdf'
 import { PdfError } from './errors'
 import { repairLigatures } from './ligatures'
+import { authenticate } from './password'
 
 /**
  * The only file that imports MuPDF's document types into the rest of the engine.
@@ -66,8 +67,8 @@ export function openPdf(bytes: Uint8Array, password?: string): PdfDoc {
   openPasswordNeeded.set(pdf, needs)
   if (needs) {
     if (!given) throw new PdfError('password-required', 'This PDF is protected by a password.')
-    if (!pdf.authenticatePassword(password)) throw new PdfError('wrong-password', 'That password is not correct.')
-  } else if (given && isEncrypted(pdf) && !pdf.authenticatePassword(password)) {
+    if (!authenticate(pdf, password)) throw new PdfError('wrong-password', 'That password is not correct.')
+  } else if (given && isEncrypted(pdf) && !authenticate(pdf, password)) {
     throw new PdfError('wrong-password', 'That password is not correct.')
   }
   // MuPDF "repairs" almost anything, including a text file, into an empty document.

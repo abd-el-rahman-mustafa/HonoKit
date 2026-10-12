@@ -114,6 +114,8 @@ export function foldChar(c: string, matchCase = false): string {
   // Turkish dotted İ and dotless ı fold with I and i, one letter for one: toLowerCase turns İ
   // into i and a combining dot, and ı has no case pair, so "istanbul" missed "İSTANBUL".
   if (!matchCase && (c === 'İ' || c === 'ı')) return 'i'
+  // Greek final sigma ς is σ at the end of a word; a capital Σ folds to σ, so "ΛΟΓΟΣ" missed "λογος".
+  if (!matchCase && c === 'ς') return 'σ'
   const n = c.normalize('NFKC')
   return matchCase ? n : n.toLowerCase()
 }
