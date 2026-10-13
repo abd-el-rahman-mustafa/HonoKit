@@ -7,6 +7,7 @@ import { removeThreads } from './markup'
 import { free, isSigned, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
 import { drawLine, FontSet, measureLine, pageFrame, placeOverlay } from './stamp'
 import { extractLines } from './text'
+import { unlinkRemoved, xobjectsOf } from './redactresources'
 
 /**
  * Redaction, as Acrobat's (docs/decisions.md §46): mark what must go — areas, text, or
@@ -453,6 +454,7 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
         p,
         marks.filter((m) => m.page === p).map((m) => m.box)
       )
+    const drawn = xobjectsOf(doc, pages)
     for (const p of pages) {
       // MuPDF's rewrite of the page misreads T*, ' and " after a Td and can move text far from the
       // marks: every move is made explicit first (decisions §58).
@@ -468,6 +470,8 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
         free(page)
       }
     }
+    // What went may still be named by resources the page shared with others (inherited, shared).
+    unlinkRemoved(doc, drawn)
     // The boxes (and labels) are drawn onto the pages themselves, so they cannot be removed.
     const frames = pages.map((p) => pageFrame(doc, p))
     const overlay = await PDFDocument.create()

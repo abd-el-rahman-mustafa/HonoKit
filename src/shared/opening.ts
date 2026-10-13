@@ -32,6 +32,9 @@ export function fileKind(path: string): OpenRequest['kind'] | null {
   return pictures.has(ext) ? 'image' : null
 }
 
+/** At most this many arguments are joined into one path. */
+const MAX_JOINED = 32
+
 /**
  * The files in a command line, in order, and whether it asked to edit them. `isFile` says whether
  * an argument is an existing file (the main process checks it is absolute, too); switches and the
@@ -40,10 +43,30 @@ export function fileKind(path: string): OpenRequest['kind'] | null {
 export function openRequests(argv: readonly string[], isFile: (path: string) => boolean): OpenRequest[] {
   const edit = argv.includes(EDIT_SWITCH)
   const out: OpenRequest[] = []
-  for (const arg of argv) {
+  const opens = (path: string): OpenRequest['kind'] | null => {
+    const kind = fileKind(path)
+    return kind && isFile(path) ? kind : null
+  }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!
     if (arg.startsWith('--')) continue
-    const kind = fileKind(arg)
-    if (kind && isFile(arg)) out.push({ path: arg, kind, edit })
+    const kind = opens(arg)
+    if (kind) {
+      out.push({ path: arg, kind, edit })
+      continue
+    }
+    // Some launchers pass a path unquoted, so Windows splits it at its spaces. Acrobat opens it: the
+    // parts are joined again when one names no file but together they do (the longest run first).
+    let end = i
+    while (end + 1 < argv.length && end - i < MAX_JOINED && !argv[end + 1]!.startsWith('--')) end++
+    for (let j = end; j > i; j--) {
+      const joined = argv.slice(i, j + 1).join(' ')
+      const k = opens(joined)
+      if (!k) continue
+      out.push({ path: joined, kind: k, edit })
+      i = j
+      break
+    }
   }
   return out
 }

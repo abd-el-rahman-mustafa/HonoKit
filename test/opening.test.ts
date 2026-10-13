@@ -92,6 +92,27 @@ describe('what a file is, by its name', () => {
   })
 })
 
+describe('a path a launcher passed without quotes', () => {
+  const files = new Set(['P:\\Archive\\00042A26 Contract.PDF', 'P:\\a b\\c d e.pdf', 'P:\\Archive\\00042A26'])
+  const exists = (p: string): boolean => files.has(p)
+
+  it('is joined again where its parts name no file but the whole does', () => {
+    const requests = openRequests(['C:\\Program Files\\HonoKit\\HonoKit.exe', 'P:\\a', 'b\\c', 'd', 'e.pdf', '--edit'], exists)
+    expect(requests).toEqual([{ path: 'P:\\a b\\c d e.pdf', kind: 'pdf', edit: true }])
+  })
+
+  it('keeps arguments that name files as they are, and joins only what follows', () => {
+    // The first part is a file of its own (no extension we open): the longest run that is a file wins.
+    expect(openRequests(['P:\\Archive\\00042A26', 'Contract.PDF'], exists).map((r) => r.path)).toEqual(['P:\\Archive\\00042A26 Contract.PDF'])
+    expect(openRequests(['P:\\a b\\c d e.pdf', 'P:\\Archive\\00042A26', 'Contract.PDF', 'missing.pdf'], exists).map((r) => r.path)).toEqual(['P:\\a b\\c d e.pdf', 'P:\\Archive\\00042A26 Contract.PDF'])
+  })
+
+  it('does not join across a switch, and leaves parts that never make a file', () => {
+    expect(openRequests(['P:\\a', '--edit', 'b\\c', 'd', 'e.pdf'], exists)).toEqual([])
+    expect(openRequests(['x', 'y.pdf'], exists)).toEqual([])
+  })
+})
+
 describe.skipIf(corpus.length === 0)('a command line with the owner\'s PDFs and pictures', () => {
   it('opens each PDF in the reader and each picture in the viewer, in order', () => {
     const picture = join(folder, 'a.png')
