@@ -791,6 +791,38 @@ export async function runSmoke(window: BrowserWindow, openFiles: (paths: string[
           await clickIn('[data-right-rail]', labels.comments ?? 'Comments')
           await wait(1500)
         }
+        // The quick tools dragged to the far side stay in view when the window is made narrower (§92).
+        {
+          const card = "document.querySelector('[data-quick-tools]')"
+          const area = `${card}.parentElement.offsetParent`
+          const moved = await js<boolean>(`(() => {
+            const grip = ${card}?.querySelector('button')
+            if (!grip) return false
+            const g = grip.getBoundingClientRect()
+            const a = ${area}.getBoundingClientRect()
+            const from = { bubbles: true, button: 0, clientX: g.left + g.width / 2, clientY: g.top + g.height / 2 }
+            const to = { bubbles: true, button: 0, clientX: a.right - 12, clientY: from.clientY + 40 }
+            grip.dispatchEvent(new MouseEvent('mousedown', from))
+            window.dispatchEvent(new MouseEvent('mousemove', to))
+            window.dispatchEvent(new MouseEvent('mouseup', to))
+            return true
+          })()`)
+          await wait(300)
+          const { width: w, height: h } = window.getBounds()
+          window.setSize(Math.round(w * 0.6), h)
+          await wait(1000)
+          const inView = await js<string>(`(() => {
+            const c = ${card}.getBoundingClientRect()
+            const a = ${area}.getBoundingClientRect()
+            return c.left >= a.left && c.right <= a.right && c.top >= a.top && c.bottom <= a.bottom ? 'yes' : 'NO ' + JSON.stringify({ card: c, area: a })
+          })()`)
+          steps.push(`quick tools: dragged to the far side ${moved}; in view after the window was narrowed: ${inView}`)
+          await shot('15c-quick-tools-narrow')
+          window.setSize(w, h)
+          await wait(1000)
+          await js(`${card}?.querySelector('button')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`)
+          await wait(300)
+        }
         // A stamp chosen in the panel, placed with a click; then a text box dragged out and typed in.
         if (await clickIn('[data-tool-panel]', labels.stamp ?? 'Stamp')) {
           await wait(500)

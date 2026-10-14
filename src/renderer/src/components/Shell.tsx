@@ -41,7 +41,7 @@ import {
   ZoomOut,
   Printer
 } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   changeSettings,
   closeDoc,
@@ -71,6 +71,7 @@ import {
 import type { Key } from '../i18n'
 import { HUB_LABEL, hubOf, TOOLS, type Hub } from '../tools/catalogue'
 import { Logo } from './Home'
+import { quickPlaceAt, quickPlaceOffset, QUICK_MARGIN, type QuickPlace, type Size } from './quickPlace'
 import { ShareMenu } from './ShareMenu'
 import { Spinner } from './ui'
 
@@ -539,7 +540,7 @@ function BarButton({ label, onClick, disabled, children }: { label: string; onCl
  * active tool is a blue square. Each choice also brings up the panel holding its options.
  */
 /** Where the person dragged the quick tools, for this session (null: the default corner). */
-let quickPosition: { x: number; y: number } | null = null
+let quickPosition: QuickPlace | null = null
 
 type DrawVariant = 'pen' | MarkStyle['shape']
 type TextVariant = MarkStyle['textMark']
@@ -570,6 +571,20 @@ export function QuickTools({ view, onPicture }: { view: DocView; onPicture: () =
   const [pos, setPos] = useState(quickPosition)
   const [menu, setMenu] = useState<null | 'customize' | 'highlight' | 'draw' | 'colour'>(null)
   const card = useRef<HTMLDivElement>(null)
+  // The sizes of the card and of the pages' area, followed as the window is resized (§92).
+  const [sizes, setSizes] = useState<{ card: Size; area: Size } | null>(null)
+  useLayoutEffect(() => {
+    const el = card.current
+    const area = el?.offsetParent as HTMLElement | null
+    if (!el || !area) return
+    const measure = (): void =>
+      setSizes({ card: { width: el.offsetWidth, height: el.offsetHeight }, area: { width: area.clientWidth, height: area.clientHeight } })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(area)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
   const menuRef = useOutside(menu !== null, () => setMenu(null))
   const { markStyle, editTool } = view
   const style = (patch: Partial<MarkStyle>): void => updateView(view.info.id, { markStyle: { ...markStyle, ...patch } })
@@ -629,9 +644,9 @@ export function QuickTools({ view, onPicture }: { view: DocView; onPicture: () =
     const dx = e.clientX - r.left
     const dy = e.clientY - r.top
     const move = (m: MouseEvent): void => {
-      const x = Math.min(Math.max(4, m.clientX - a.left - dx), a.width - r.width - 4)
-      const y = Math.min(Math.max(4, m.clientY - a.top - dy), a.height - r.height - 4)
-      quickPosition = { x, y }
+      const x = Math.min(Math.max(QUICK_MARGIN, m.clientX - a.left - dx), a.width - r.width - QUICK_MARGIN)
+      const y = Math.min(Math.max(QUICK_MARGIN, m.clientY - a.top - dy), a.height - r.height - QUICK_MARGIN)
+      quickPosition = quickPlaceAt(x, y, r, a)
       setPos(quickPosition)
     }
     const up = (): void => {
@@ -645,8 +660,9 @@ export function QuickTools({ view, onPicture }: { view: DocView; onPicture: () =
   const toggle = (id: string): void => void changeSettings({ quickHidden: hidden.includes(id) ? hidden.filter((x) => x !== id) : [...hidden, id] })
   const popover = 'absolute start-11 top-0 z-40 rounded-lg border border-line bg-surface p-1 shadow-xl'
 
+  const at = pos && sizes ? quickPlaceOffset(pos, sizes.card, sizes.area) : null
   return (
-    <div ref={card} className={clsx('absolute z-20', !pos && 'start-3 top-3')} style={pos ? { left: pos.x, top: pos.y } : undefined}>
+    <div ref={card} className={clsx('absolute z-20', !at && 'start-3 top-3')} style={at ?? undefined}>
       <div ref={menuRef} className="flex flex-col gap-0.5 rounded-xl border border-line bg-surface p-1 shadow-lg" role="toolbar" aria-orientation="vertical" aria-label={t('quickTools')} data-quick-tools="">
         <button
           type="button"
