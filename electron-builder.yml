@@ -91,18 +91,78 @@ win:
   # own. PowerPDF, HonoPDF and HonoKit 0.17.0 all used "PDF Document": each installer
   # overwrote the others' command, an uninstall deleted it, and "Open with" lost HonoKit.
   # build/installer.nsh removes that old shared ProgID.
-  # Pictures have their own ProgID, HonoKit.Image (§75); build/installer.nsh keeps them from
-  # becoming HonoKit's by default and adds "Edit with HonoKit" for PDFs and pictures.
+  # Pictures have their own ProgIDs, one per format (§75, §91); build/installer.nsh keeps them
+  # from becoming HonoKit's by default and adds "Edit with HonoKit" for PDFs and pictures.
+  # `icon` is the file's icon when HonoKit is its default app: a page with the format's name
+  # (build/file-icons, `npm run icons`), never the app's own icon (§91). A ProgID holds one icon,
+  # so each name on a band needs its own ProgID.
   fileAssociations:
     - ext: pdf
       name: HonoKit.PDF
       description: PDF Document
       mimeType: application/pdf
       role: Editor
-    - ext: [jpg, jpeg, jfif, png, webp, gif, heic, heif, avif, tif, tiff, bmp, svg, ico, jxl]
-      name: HonoKit.Image
-      description: Image
+      icon: file-icons/pdf
+    - ext: [jpg, jpeg, jfif]
+      name: HonoKit.JPEG
+      description: JPEG Image
       role: Viewer
+      icon: file-icons/jpg
+    - ext: png
+      name: HonoKit.PNG
+      description: PNG Image
+      role: Viewer
+      icon: file-icons/png
+    - ext: webp
+      name: HonoKit.WEBP
+      description: WebP Image
+      role: Viewer
+      icon: file-icons/webp
+    - ext: gif
+      name: HonoKit.GIF
+      description: GIF Image
+      role: Viewer
+      icon: file-icons/gif
+    - ext: heic
+      name: HonoKit.HEIC
+      description: HEIC Image
+      role: Viewer
+      icon: file-icons/heic
+    - ext: heif
+      name: HonoKit.HEIF
+      description: HEIF Image
+      role: Viewer
+      icon: file-icons/heif
+    - ext: avif
+      name: HonoKit.AVIF
+      description: AVIF Image
+      role: Viewer
+      icon: file-icons/avif
+    - ext: [tif, tiff]
+      name: HonoKit.TIFF
+      description: TIFF Image
+      role: Viewer
+      icon: file-icons/tiff
+    - ext: bmp
+      name: HonoKit.BMP
+      description: Bitmap Image
+      role: Viewer
+      icon: file-icons/bmp
+    - ext: svg
+      name: HonoKit.SVG
+      description: SVG Image
+      role: Viewer
+      icon: file-icons/svg
+    - ext: ico
+      name: HonoKit.ICO
+      description: Icon
+      role: Viewer
+      icon: file-icons/ico
+    - ext: jxl
+      name: HonoKit.JXL
+      description: JPEG XL Image
+      role: Viewer
+      icon: file-icons/jxl
   # Installed copies accept an update only if it is signed by this name (decisions §36;
   # docs/research-signpath.md §3.5.1). Local builds are unsigned and are not published.
   signtoolOptions:

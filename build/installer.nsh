@@ -5,10 +5,12 @@
 ; Remove the old one, but only when one of these apps wrote it: its open verb is
 ; then named "Open with <app>". Left behind, it points at a deleted or older program.
 ;
-; Pictures (decisions §75) are registered under "HonoKit.Image": HonoKit is listed in
-; "Open with" (OpenWithProgids) but never made their default. electron-builder's
-; association also writes the extension's default value, so it is taken back here,
-; and the value another app had set there is put back (saved in customInit).
+; Pictures (decisions §75) are registered under one ProgID per format, HonoKit.JPEG,
+; HonoKit.PNG… (§91: each holds the icon with its format's name; up to 0.19.0 they shared
+; "HonoKit.Image", removed here). HonoKit is listed in "Open with" (OpenWithProgids) but
+; never made their default. electron-builder's association also writes the extension's
+; default value, so it is taken back here, and the value another app had set there is put
+; back (saved in customInit). Any value starting "HonoKit." is one of ours.
 ;
 ; "Edit with HonoKit" opens a PDF in the editor and a picture in the Photo editor
 ; (the --edit switch). It is a verb under SystemFileAssociations, so it shows whichever
@@ -30,14 +32,18 @@
 !macro honokitSaveType EXT
   ReadRegStr $0 HKCU "Software\Classes\.${EXT}" ""
   StrCmp $0 "" honokit_save_done_${EXT}
-  StrCmp $0 "HonoKit.Image" honokit_save_done_${EXT}
+  StrCpy $1 $0 8
+  StrCmp $1 "HonoKit." honokit_save_done_${EXT}
     WriteRegStr HKCU "${HONOKIT_SAVED}" "${EXT}" $0
   honokit_save_done_${EXT}:
 !macroend
 
 !macro honokitPictureType EXT
+  ; The ProgID all pictures shared up to 0.19.0 (§91); the old uninstaller normally removed it.
+  DeleteRegValue HKCU "Software\Classes\.${EXT}\OpenWithProgids" "HonoKit.Image"
   ReadRegStr $0 HKCU "Software\Classes\.${EXT}" ""
-  StrCmp $0 "HonoKit.Image" 0 honokit_type_done_${EXT}
+  StrCpy $1 $0 8
+  StrCmp $1 "HonoKit." 0 honokit_type_done_${EXT}
     ; Ours: give back the default that was there before, or none.
     ReadRegStr $1 HKCU "${HONOKIT_SAVED}" "${EXT}"
     StrCmp $1 "" 0 +3
@@ -48,13 +54,15 @@
   !insertmacro honokitEditVerb "${EXT}"
 !macroend
 
-!macro honokitRemoveType EXT PROGID
+!macro honokitRemoveType EXT
   DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.${EXT}\shell\HonoKit.Edit"
   DeleteRegKey /ifempty HKCU "Software\Classes\SystemFileAssociations\.${EXT}\shell"
   DeleteRegKey /ifempty HKCU "Software\Classes\SystemFileAssociations\.${EXT}"
-  ; The extension's default, if it still names our ProgID, would point at nothing.
+  DeleteRegValue HKCU "Software\Classes\.${EXT}\OpenWithProgids" "HonoKit.Image"
+  ; The extension's default, if it still names one of our ProgIDs, would point at nothing.
   ReadRegStr $0 HKCU "Software\Classes\.${EXT}" ""
-  StrCmp $0 "${PROGID}" 0 +2
+  StrCpy $1 $0 8
+  StrCmp $1 "HonoKit." 0 +2
     DeleteRegValue HKCU "Software\Classes\.${EXT}" ""
 !macroend
 
@@ -76,10 +84,6 @@
   !insertmacro ${MACRO} "jxl"
 !macroend
 
-!macro honokitRemovePicture EXT
-  !insertmacro honokitRemoveType "${EXT}" "HonoKit.Image"
-!macroend
-
 !macro customInit
   ; A key left by an install that was cancelled must not restore an older default.
   DeleteRegKey HKCU "${HONOKIT_SAVED}"
@@ -97,6 +101,7 @@
   honokitOldProgIdDone:
   !insertmacro honokitEditVerb "pdf"
   !insertmacro honokitPictureTypes honokitPictureType
+  DeleteRegKey HKCU "Software\Classes\HonoKit.Image"
   DeleteRegKey HKCU "${HONOKIT_SAVED}"
   DeleteRegKey /ifempty HKCU "Software\HonoKit"
   ; Tell Explorer the associations changed, so "Open with" updates without signing out.
@@ -104,6 +109,7 @@
 !macroend
 
 !macro customUnInstall
-  !insertmacro honokitRemoveType "pdf" "HonoKit.PDF"
-  !insertmacro honokitPictureTypes honokitRemovePicture
+  !insertmacro honokitRemoveType "pdf"
+  !insertmacro honokitPictureTypes honokitRemoveType
+  DeleteRegKey HKCU "Software\Classes\HonoKit.Image"
 !macroend

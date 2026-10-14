@@ -25,7 +25,7 @@
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "icons": "node scripts/make-icon.mjs",
+    "icons": "node scripts/make-icon.mjs && node scripts/make-file-icons.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --publish never",
