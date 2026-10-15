@@ -154,6 +154,31 @@ export function saveBytes(doc: PdfDoc, options: string = SAVE_SNAPSHOT): Uint8Ar
   }
 }
 
+/**
+ * Checks that bytes about to replace a file open again with all `pages` (§93). A rewrite keeps
+ * only the objects the catalog reaches; a page the reader found some other way would be lost, and
+ * the person's file must never be replaced by one that opens with fewer pages, or not at all.
+ */
+export function checkSaved(bytes: Uint8Array, password: string | undefined, pages: number): void {
+  let found = -1
+  let doc: mupdf.Document | undefined
+  try {
+    doc = mupdf.Document.openDocument(bytes, 'application/pdf')
+    if (password) doc.authenticatePassword(password)
+    found = doc.countPages()
+  } catch {
+    found = -1
+  } finally {
+    free(doc)
+  }
+  if (found !== pages) {
+    throw Object.assign(new PdfError('corrupt', `The saved copy would open with ${Math.max(found, 0)} of ${pages} pages, so the file was not replaced.`), {
+      key: 'error.saveCheck',
+      values: { found: Math.max(found, 0), pages },
+    })
+  }
+}
+
 /** A blank PDF with no pages, ready for grafting into. */
 export function newPdf(): PdfDoc {
   return new mupdf.PDFDocument()

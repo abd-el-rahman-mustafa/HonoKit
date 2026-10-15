@@ -21,7 +21,7 @@ import type { OpInput } from '@shared/ops'
 import { BRAND } from '@shared/brand'
 import { PdfError } from '@engine/errors'
 import { imagesToPdf, pdfToImages } from '@engine/images'
-import { free, needsOpenPassword, openPdf, rightsOf, saveBytes, SAVE_FINAL, type PdfDoc } from '@engine/mupdf'
+import { checkSaved, free, needsOpenPassword, openPdf, rightsOf, saveBytes, SAVE_FINAL, type PdfDoc } from '@engine/mupdf'
 import { keepPages, mergePdfs, splitByRanges, blankPdf } from '@engine/pages'
 import { pageGeometry, renderPage, whiteMargins, type RenderedPage } from '@engine/render'
 import { extractLines, searchLines, selectText, type Selection, type SelectUnit, type TextLine } from '@engine/text'
@@ -391,6 +391,7 @@ export class Sessions {
     let out: Uint8Array
     try {
       out = saveBytes(doc, SAVE_FINAL)
+      checkSaved(out, s.password, doc.countPages())
     } finally {
       free(doc)
     }
@@ -415,6 +416,7 @@ export class Sessions {
     let out: Uint8Array
     try {
       out = saveBytes(doc, SAVE_FINAL)
+      checkSaved(out, s.password, doc.countPages())
     } finally {
       free(doc)
     }

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { closeSync, openSync, renameSync, rmSync, writeSync } from 'node:fs'
-import { open, rename, rm } from 'node:fs/promises'
+import { closeSync, fsyncSync, openSync, renameSync, rmSync, writeSync } from 'node:fs'
+import { open, rename, rm, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 /**
@@ -27,8 +27,20 @@ const taken = (error: unknown): boolean => {
   return code === 'EEXIST' || code === 'EPERM' || code === 'EISDIR'
 }
 
-/** Writes `data` to `target` through an exclusively created staging file beside it. */
-export async function writeStaged(target: string, data: Uint8Array | string, suffixes: Iterator<string> = stagingSuffixes()): Promise<void> {
+/** Flushes a staging file to the disk: a late write error then fails the save, not the next read. */
+const flushToDisk = (handle: FileHandle): Promise<void> => handle.sync()
+
+/**
+ * Writes `data` to `target` through an exclusively created staging file beside it. The staging
+ * file is flushed before the rename (§93), so the old file is only replaced by bytes the disk has
+ * accepted; a failed flush leaves it as it was.
+ */
+export async function writeStaged(
+  target: string,
+  data: Uint8Array | string,
+  suffixes: Iterator<string> = stagingSuffixes(),
+  flush: (handle: FileHandle) => Promise<void> = flushToDisk,
+): Promise<void> {
   for (let i = 0; i < ATTEMPTS; i++) {
     const next = suffixes.next()
     if (next.done) break
@@ -43,6 +55,7 @@ export async function writeStaged(target: string, data: Uint8Array | string, suf
     try {
       try {
         await handle.writeFile(data)
+        await flush(handle)
       } finally {
         await handle.close()
       }
@@ -74,6 +87,7 @@ export function writeStagedSync(target: string, data: string | Uint8Array, suffi
       try {
         const bytes = typeof data === 'string' ? Buffer.from(data, 'utf8') : data
         for (let at = 0; at < bytes.length; ) at += writeSync(fd, bytes, at, bytes.length - at)
+        fsyncSync(fd)
       } finally {
         closeSync(fd)
       }
