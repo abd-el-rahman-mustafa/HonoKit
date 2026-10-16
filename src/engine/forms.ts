@@ -126,6 +126,45 @@ function fieldOf(widget: mupdf.PDFObject): mupdf.PDFObject {
   return widget.get('T').isString() || !parent.isDictionary() ? widget : parent
 }
 
+/** The field's fully qualified name: its /T after its ancestors', joined with dots. */
+function fullNameOf(field: mupdf.PDFObject): string {
+  const parts: string[] = []
+  for (let o = field, k = 0; o.isDictionary() && k < 32; o = o.get('Parent'), k++) {
+    const t = o.get('T')
+    if (t.isString()) parts.unshift(t.asString())
+  }
+  return parts.join('.')
+}
+
+/**
+ * Other field dictionaries of the form with `field`'s fully qualified name and type: one field
+ * by the standard, written as several by some programs. Bounded, so a looping tree ends.
+ */
+function twinsOf(doc: PdfDoc, field: mupdf.PDFObject, type: string): mupdf.PDFObject[] {
+  const name = fullNameOf(field)
+  const self = numOf(field)
+  if (!name || self < 0) return []
+  const acro = doc.getTrailer().get('Root').get('AcroForm')
+  const fields = acro.isDictionary() ? acro.get('Fields') : null
+  if (!fields || !fields.isArray()) return []
+  const twins: mupdf.PDFObject[] = []
+  const seen = new Set<number>()
+  const walk = (node: mupdf.PDFObject, depth: number): void => {
+    if (depth > 32 || seen.size > 20_000 || !node.isDictionary()) return
+    const num = numOf(node)
+    if (num >= 0) {
+      if (seen.has(num)) return
+      seen.add(num)
+    }
+    const ft = node.getInheritable('FT')
+    if (num !== self && num >= 0 && node.get('T').isString() && ft.isName() && ft.asName() === type && fullNameOf(node) === name) twins.push(node)
+    const kids = node.get('Kids')
+    if (kids.isArray()) for (let i = 0; i < kids.length; i++) walk(kids.get(i), depth + 1)
+  }
+  for (let i = 0; i < fields.length; i++) walk(fields.get(i), 0)
+  return twins
+}
+
 /** Every widget of the field `field` (itself when field and widget are one dictionary). */
 function widgetsOf(field: mupdf.PDFObject): mupdf.PDFObject[] {
   const kids = field.get('Kids')
@@ -348,10 +387,20 @@ export async function fillForm(bytes: Uint8Array, values: FieldValue[], password
           const da = daOf(w)
           // The field's other widgets (the same value shown twice, F2) get our drawing too.
           const self = numOf(w.getObject())
-          const others = widgetsOf(fieldOf(w.getObject()))
+          const field = fieldOf(w.getObject())
+          const others = widgetsOf(field)
             .filter((o) => numOf(o) !== self)
             .map((obj) => ({ obj, da: daOfObject(obj) }))
           w.setTextValue(text)
+          // Fields with the same fully qualified name are one field (PDF 32000 §12.7.3.1).
+          // Writers that repeat a name as separate field dictionaries, instead of widgets under
+          // one parent, get the value in each of them, drawn in their own widgets; otherwise
+          // Acrobat shows whichever /V it reads first and the typed value seems lost.
+          for (const twin of twinsOf(doc, field, 'Tx')) {
+            twin.put('V', doc.newString(text))
+            twin.delete('RV')
+            for (const obj of widgetsOf(twin)) others.push({ obj, da: daOfObject(obj) })
+          }
           drawn.push({ w, value: text, da, others })
         } else throw new PdfError('unsupported', 'This kind of field cannot be filled in here.')
         w.update()
@@ -487,7 +536,9 @@ export function addFormFields(bytes: Uint8Array, fields: NewField[], password?: 
       if (turn) mk.put('R', turn)
       w.put('MK', mk)
       const height = f.box[3] - f.box[1]
-      w.put('DA', doc.newString(`/Helv ${f.kind === 'multiline' ? 10 : Math.max(6, Math.min(12, Math.round(height * 0.6)))} Tf 0 g`))
+      // Text fields take Acrobat's Auto size (0): 12 pt where there is room, smaller in a short
+      // box or for a long value, so nothing clips; a size fitted to the empty box did once filled.
+      w.put('DA', doc.newString(f.kind === 'text' || f.kind === 'multiline' ? '/Helv 0 Tf 0 g' : `/Helv ${Math.max(6, Math.min(12, Math.round(height * 0.6)))} Tf 0 g`))
       if (f.kind === 'text' || f.kind === 'multiline') {
         w.put('FT', doc.newName('Tx'))
         if (f.kind === 'multiline') w.put('Ff', 4096)

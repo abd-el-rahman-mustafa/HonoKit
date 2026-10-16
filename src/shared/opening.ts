@@ -25,6 +25,21 @@ function extensionOf(path: string): string {
   return dot <= 0 ? '' : name.slice(dot + 1).toLowerCase()
 }
 
+/**
+ * Whether two paths name the same file as Windows does: letter case and the kind of slash do not
+ * matter, nor a "." step. A file that is open already comes to the front instead of opening twice.
+ */
+export function samePath(a: string, b: string): boolean {
+  const key = (p: string): string =>
+    p
+      .replace(/[\\/]+/g, '/')
+      .split('/')
+      .filter((part) => part !== '.')
+      .join('/')
+      .toLowerCase()
+  return a.length > 0 && b.length > 0 && key(a) === key(b)
+}
+
 /** What a file is by its name: a PDF, a picture, or neither. The bytes are checked when it is read. */
 export function fileKind(path: string): OpenRequest['kind'] | null {
   const ext = extensionOf(path)

@@ -21,7 +21,7 @@ import { makeLatinPdf } from './fixtures'
  */
 
 const LABELS = { signedBy: 'Digitally signed', date: '2026-10-08' }
-const P12 = createDigitalId('Test Signer', '', '', 'secret')
+const P12 = createDigitalId('Test Signer', '', '', 'secret12')
 
 // --- helpers ---------------------------------------------------------------------------------
 
@@ -265,7 +265,7 @@ describe('redaction leaves nothing behind', () => {
   }, 60_000)
 
   it('rewrites a signed file in full, so the original revision is gone, and says the signatures broke', async () => {
-    const signed = await signWithCertificate(await redactFixture(), { p12: P12, password: 'secret', page: 0, box: [300, 300, 480, 360], labels: LABELS })
+    const signed = await signWithCertificate(await redactFixture(), { p12: P12, password: 'secret12', page: 0, box: [300, 300, 480, 360], labels: LABELS })
     expect((await verifySignatures(signed))[0]!.valid).toBe(true)
     const r = await redact(signed)
     expect(r.note?.key).toBe('note.redactedSigned')
@@ -282,7 +282,7 @@ describe('redaction leaves nothing behind', () => {
 
   it('redact, then sign: the signature is appended to a file that no longer holds the words', async () => {
     const r = await redact(await redactFixture())
-    const signed = await signWithCertificate(r.bytes, { p12: P12, password: 'secret', page: 0, box: [300, 300, 480, 360], labels: LABELS })
+    const signed = await signWithCertificate(r.bytes, { p12: P12, password: 'secret12', page: 0, box: [300, 300, 480, 360], labels: LABELS })
     expect((await verifySignatures(signed))[0]!.valid).toBe(true)
     expect(leaked(signed, GONE)).toEqual([])
     const doc = openPdf(signed)
@@ -584,14 +584,14 @@ function resign(signed: Uint8Array, range: (cStart: number, cEnd: number, length
   const hash = createHash('sha256')
   hash.update(buf.subarray(a, a + b))
   hash.update(buf.subarray(c, c + d))
-  const cms = buildCms(hash.digest(), loadDigitalId(P12, 'secret'), new Date())
+  const cms = buildCms(hash.digest(), loadDigitalId(P12, 'secret12'), new Date())
   buf.write(cms.toString('hex').padEnd(cClose - cOpen - 1, '0'), cOpen + 1, 'latin1')
   return new Uint8Array(buf)
 }
 
 describe('signature checks', () => {
   it('accepts the byte range only when it covers the whole file but the signature itself', async () => {
-    const signed = await signWithCertificate(await makeLatinPdf(1), { p12: P12, password: 'secret', page: 0, box: [100, 100, 300, 160], labels: LABELS })
+    const signed = await signWithCertificate(await makeLatinPdf(1), { p12: P12, password: 'secret12', page: 0, box: [100, 100, 300, 160], labels: LABELS })
     // Re-signed with the right range: valid (the helper itself is sound).
     const fair = resign(signed, (cs, ce, n) => [0, cs, ce, n - ce])
     expect((await verifySignatures(fair))[0]!.valid).toBe(true)
@@ -612,7 +612,7 @@ describe('signature checks', () => {
   // asks, so signing an encrypted file works and checks — as Acrobat signs encrypted files.
   it('signs an encrypted file: the signature checks and the file keeps its password', async () => {
     const locked = await applyOperation(await makeLatinPdf(1), { op: 'protect', userPassword: 'open-me', ownerPassword: 'owner-x' } as never)
-    const signed = await signWithCertificate(locked.bytes, { p12: P12, password: 'secret', page: 0, box: [100, 100, 300, 160], labels: LABELS }, 'owner-x')
+    const signed = await signWithCertificate(locked.bytes, { p12: P12, password: 'secret12', page: 0, box: [100, 100, 300, 160], labels: LABELS }, 'owner-x')
     const [s] = await verifySignatures(signed)
     expect(s!.valid).toBe(true)
     expect(s!.modifiedAfter).toBe(false)
@@ -633,7 +633,7 @@ describe('signature checks', () => {
     const pdf = await PDFDocument.create()
     const page = pdf.addPage([400, 400])
     pdf.getForm().createTextField('Signature1').addToPage(page, { x: 40, y: 40, width: 100, height: 20 })
-    const signed = await signWithCertificate(new Uint8Array(await pdf.save()), { p12: P12, password: 'secret', page: 0, box: [100, 100, 300, 160], labels: LABELS })
+    const signed = await signWithCertificate(new Uint8Array(await pdf.save()), { p12: P12, password: 'secret12', page: 0, box: [100, 100, 300, 160], labels: LABELS })
     const names = fields(signed).map((f) => f.name)
     expect(names).toContain('Signature1')
     expect(names).toContain('Signature2')
@@ -657,7 +657,7 @@ describe('saving from a session', () => {
   for (const signedFirst of [false, true]) {
     it(`a redacted ${signedFirst ? 'signed ' : ''}file saved from the session holds none of the words`, async () => {
       let src = await redactFixture()
-      if (signedFirst) src = await signWithCertificate(src, { p12: P12, password: 'secret', page: 0, box: [300, 300, 480, 360], labels: LABELS })
+      if (signedFirst) src = await signWithCertificate(src, { p12: P12, password: 'secret12', page: 0, box: [300, 300, 480, 360], labels: LABELS })
       const path = join(dir, 'in.pdf')
       writeFileSync(path, src)
       const doc = await sessions.openFile(path)

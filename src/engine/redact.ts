@@ -34,7 +34,10 @@ const PATTERNS: Record<RedactPattern, RegExp> = {
   email: /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu,
   // UAE numbers (+971 / 00971 / 0 then 5x or a landline code), and other international numbers
   // (+ or 00, groups split by spaces, dashes or dots), taken whole so no part stays readable.
-  phone: /(?:(?:\+|\b00)971[\s.-]?|\b0)(?:5\d|[2-9])[\s.-]?\d{3}[\s.-]?\d{4}\b|(?:\+|\b00)\d{1,3}[\s.-]?\(?\d{1,4}\)?(?:[\s.-]?\d{2,4}){2,5}/g,
+  // A phone number is a whole run of digit groups: one reached through a separator from a digit
+  // before it (the tail of a social security number, a card, a reference) is not one, nor is the
+  // head of a run that goes on past it; otherwise the start of the longer number stayed readable.
+  phone: /(?<!\d[\s.-]?)(?:(?:(?:\+|\b00)971[\s.-]?|\b0)(?:5\d|[2-9])[\s.-]?\d{3}[\s.-]?\d{4}\b|(?:\+|\b00)\d{1,3}[\s.-]?\(?\d{1,4}\)?(?:[\s.-]?\d{2,4}){2,5})(?![\s.-]?\d)/g,
   emiratesId: /\b784[\s-]?\d{4}[\s-]?\d{7}[\s-]?\d\b/g,
   // Case-insensitive because lines are matched folded; the checksum keeps it from matching words.
   iban: /\b[a-z]{2}\d{2}(?:\s?[a-z0-9]{4}){2,7}(?:\s?[a-z0-9]{1,4})?\b/gi,

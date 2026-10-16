@@ -89,19 +89,38 @@ export function SignatureDialog({ docId }: { docId: string }) {
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
     let points: Array<[number, number]> = []
+    strokes.current = []
     const at = (e: PointerEvent): [number, number] => {
       const r = canvas.getBoundingClientRect()
       return [e.clientX - r.left, e.clientY - r.top]
     }
+    const dot = (p: [number, number], colour: string): void => {
+      ctx.fillStyle = colour
+      ctx.beginPath()
+      ctx.arc(p[0], p[1], 1.3, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    const segment = (a: [number, number], b: [number, number], c: [number, number], colour: string): void => {
+      ctx.strokeStyle = colour
+      ctx.lineWidth = 3.2
+      ctx.beginPath()
+      ctx.moveTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+      ctx.quadraticCurveTo(b[0], b[1], (b[0] + c[0]) / 2, (b[1] + c[1]) / 2)
+      ctx.stroke()
+    }
+    // Draws every stroke kept so far, after one is taken back.
+    redraw.current = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      for (const s of strokes.current) {
+        dot(s.points[0]!, s.colour)
+        for (let i = 2; i < s.points.length; i++) segment(s.points[i - 2]!, s.points[i - 1]!, s.points[i]!, s.colour)
+      }
+    }
     const down = (e: PointerEvent): void => {
       canvas.setPointerCapture(e.pointerId)
       points = [at(e)]
-      ctx.strokeStyle = inkRef.current
-      ctx.fillStyle = inkRef.current
-      ctx.lineWidth = 3.2
-      ctx.beginPath()
-      ctx.arc(points[0]![0], points[0]![1], 1.3, 0, Math.PI * 2)
-      ctx.fill()
+      strokes.current.push({ colour: inkRef.current, points })
+      dot(points[0]!, inkRef.current)
       setDrawn(true)
     }
     const move = (e: PointerEvent): void => {
@@ -112,10 +131,7 @@ export function SignatureDialog({ docId }: { docId: string }) {
       points.push(p)
       if (points.length < 3) return
       const [a, b, c] = points.slice(-3) as Array<[number, number]>
-      ctx.beginPath()
-      ctx.moveTo((a![0] + b![0]) / 2, (a![1] + b![1]) / 2)
-      ctx.quadraticCurveTo(b![0], b![1], (b![0] + c![0]) / 2, (b![1] + c![1]) / 2)
-      ctx.stroke()
+      segment(a!, b!, c!, inkRef.current)
     }
     const up = (): void => {
       points = []
@@ -133,13 +149,37 @@ export function SignatureDialog({ docId }: { docId: string }) {
   }, [tab])
   const inkRef = useRef(ink)
   inkRef.current = ink
+  /** The strokes drawn on the pad, each in the ink it was drawn with, so the last can be taken back. */
+  const strokes = useRef<Array<{ colour: string; points: Array<[number, number]> }>>([])
+  const redraw = useRef<() => void>(() => {})
 
   const clearPad = (): void => {
     const canvas = pad.current
     if (!canvas) return
     canvas.getContext('2d')!.clearRect(0, 0, canvas.width, canvas.height)
+    strokes.current = []
     setDrawn(false)
   }
+
+  /** Takes back the last stroke (the Undo link, or Ctrl+Z while drawing), as Acrobat's pad does. */
+  const undoStroke = (): void => {
+    if (!strokes.current.length) return
+    strokes.current.pop()
+    redraw.current()
+    setDrawn(strokes.current.length > 0)
+  }
+
+  useEffect(() => {
+    if (tab !== 'draw') return
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !(e.target as HTMLElement | null)?.closest('input, textarea')) {
+        e.preventDefault()
+        undoStroke()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tab])
 
   const typedCanvas = (): HTMLCanvasElement => {
     const css = FACES.find((f) => f.id === face)!.css
@@ -241,9 +281,14 @@ export function SignatureDialog({ docId }: { docId: string }) {
           <canvas ref={pad} className="h-[180px] w-full touch-none rounded-lg border border-dashed border-line bg-white" style={{ cursor: 'crosshair' }} aria-label={t('signDrawHint')} />
           <div className="flex items-center justify-between text-[12px] text-muted">
             <span>{t('signDrawHint')}</span>
-            <button type="button" className="text-accent hover:underline" onClick={clearPad}>
-              {t('clear')}
-            </button>
+            <span className="flex gap-3">
+              <button type="button" className="text-accent hover:underline disabled:text-muted disabled:no-underline" disabled={!drawn} onClick={undoStroke} title="Ctrl+Z">
+                {t('undo')}
+              </button>
+              <button type="button" className="text-accent hover:underline" onClick={clearPad}>
+                {t('clear')}
+              </button>
+            </span>
           </div>
         </div>
       )}

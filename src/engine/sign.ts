@@ -75,12 +75,68 @@ export function buildCms(digest: Buffer, id: DigitalId, signingTime: Date): Buff
   return Buffer.from(asn1.toDer(seq([oid(OID.signedData), asn1.create(asn1.Class.CONTEXT_SPECIFIC, 0, true, [signedData])])).getBytes(), 'binary')
 }
 
+/**
+ * Rounds of key derivation a new digital ID is written with, for its key, its certificates and
+ * its MAC alike (the MAC alone tells whether a guessed password is right). The library's 2048
+ * is far below today's advice; 100,000 opens in about half a second here (decisions §94).
+ */
+export const ID_ROUNDS = 100_000
+
+/** The shortest password a new digital ID may have (NIST SP 800-63B); an existing ID opens with any. */
+export const MIN_ID_PASSWORD = 8
+
+/**
+ * Rounds of key derivation an ID may ask for in all, charged before any hashing. The file sets
+ * its own counts, unchecked by the library: a crafted one could stall the password check for
+ * hours, or wrap a huge count to a single round.
+ */
+const MAX_ID_ROUNDS = 10_000_000
+
+type Derive = (...args: unknown[]) => unknown
+
+/**
+ * Runs `work` with the library's three key-derivation entry points charged against one budget
+ * of rounds: PKCS#12's own (keys, certificates and the MAC) and PBKDF2 (PBES2 keys). They are
+ * called by name through their modules, so the budget sees every count the file carries.
+ */
+function withRoundsBudget<T>(work: () => T): T {
+  let left = MAX_ID_ROUNDS
+  const charge = (count: unknown): void => {
+    const n = typeof count === 'number' && Number.isInteger(count) && count >= 1 ? count : Infinity
+    left -= n
+    if (left < 0) throw new PdfError('unsupported', 'This digital ID asks for too many rounds of key derivation to open: it is damaged, or made to stall the password check.')
+  }
+  const pkcs5 = forge.pkcs5 as unknown as { pbkdf2: Derive }
+  // The PBE module is not in the typings; it is the one pkcs12 derives its keys through.
+  const pbe = (forge as unknown as { pbe: { generatePkcs12Key: Derive } }).pbe
+  const p12 = forge.pkcs12 as unknown as { generateKey: Derive }
+  const was = { pbkdf2: pkcs5.pbkdf2, pkcs12: pbe.generatePkcs12Key, mac: p12.generateKey }
+  // pbkdf2(password, salt, iterations, …); generatePkcs12Key(password, salt, id, iterations, …).
+  pkcs5.pbkdf2 = (...args) => {
+    charge(args[2])
+    return was.pbkdf2(...args)
+  }
+  pbe.generatePkcs12Key = (...args) => {
+    charge(args[3])
+    return was.pkcs12(...args)
+  }
+  p12.generateKey = pbe.generatePkcs12Key
+  try {
+    return work()
+  } finally {
+    pkcs5.pbkdf2 = was.pbkdf2
+    pbe.generatePkcs12Key = was.pkcs12
+    p12.generateKey = was.mac
+  }
+}
+
 /** The key and certificate in a .pfx / .p12 file. */
 export function loadDigitalId(p12: Uint8Array, password: string): DigitalId {
   let parsed: forge.pkcs12.Pkcs12Pfx
   try {
-    parsed = forge.pkcs12.pkcs12FromAsn1(asn1.fromDer(forge.util.createBuffer(Buffer.from(p12).toString('binary'))), false, password)
-  } catch {
+    parsed = withRoundsBudget(() => forge.pkcs12.pkcs12FromAsn1(asn1.fromDer(forge.util.createBuffer(Buffer.from(p12).toString('binary'))), false, password))
+  } catch (error) {
+    if (error instanceof PdfError) throw error
     throw new PdfError('wrong-password', 'The digital ID could not be opened: the password is wrong, or the file is not a .pfx / .p12 digital ID.')
   }
   const certs = (parsed.getBags({ bagType: pki.oids.certBag! })[pki.oids.certBag!] ?? []).map((b) => b.cert).filter((c): c is forge.pki.Certificate => !!c)
@@ -97,6 +153,7 @@ export function loadDigitalId(p12: Uint8Array, password: string): DigitalId {
 
 /** A new self-signed digital ID as a .pfx (Acrobat's "Create a new digital ID"). */
 export function createDigitalId(name: string, email: string, organisation: string, password: string, years = 5): Uint8Array {
+  if ([...password].length < MIN_ID_PASSWORD) throw new PdfError('bad-arguments', `The password of a digital ID needs at least ${MIN_ID_PASSWORD} characters.`)
   const keys = pki.rsa.generateKeyPair(2048)
   const cert = pki.createCertificate()
   cert.publicKey = keys.publicKey
@@ -118,7 +175,8 @@ export function createDigitalId(name: string, email: string, organisation: strin
     { name: 'extKeyUsage', emailProtection: true }
   ])
   cert.sign(keys.privateKey, forge.md.sha256.create())
-  const p12 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], password, { algorithm: '3des', friendlyName: name })
+  // 3DES with SHA-1 is what every reader of .pfx files (Windows, Acrobat) opens; the rounds are ours.
+  const p12 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], password, { algorithm: '3des', count: ID_ROUNDS, friendlyName: name })
   return new Uint8Array(Buffer.from(asn1.toDer(p12).getBytes(), 'binary'))
 }
 

@@ -110,7 +110,7 @@ function arrowPng(): string {
 }
 const arrow = arrowPng()
 const p12 = join(dir, 'id.p12')
-writeFileSync(p12, createDigitalId('Test Signer', '', '', 'secret'))
+writeFileSync(p12, createDigitalId('Test Signer', '', '', 'secret12'))
 
 /** Each step is applied in turn to the blank page; the last result is compared. */
 const CASES: Array<{ name: string; steps: OpInput[] }> = [
@@ -175,7 +175,7 @@ const CASES: Array<{ name: string; steps: OpInput[] }> = [
   },
   { name: 'redaction applied', steps: [{ op: 'addText', page: 0, x: 60, y: 120, text: 'Secret words here', size: 22 }, { op: 'redactMark', marks: [{ page: 0, box: [55, 95, 200, 130] }] }, { op: 'redactApply', fill: '#000000', label: 'X' }] },
   { name: 'redaction marked', steps: [{ op: 'redactMark', marks: [{ page: 0, box: [55, 95, 200, 130] }] }] },
-  { name: 'digital signature', steps: [{ op: 'certSign', page: 0, box: [200, 380, 440, 450], p12Path: p12, password: 'secret', reason: 'Approved', labels: { signedBy: 'Digitally signed by', date: '2026-10-08' } }] }
+  { name: 'digital signature', steps: [{ op: 'certSign', page: 0, box: [200, 380, 440, 450], p12Path: p12, password: 'secret12', reason: 'Approved', labels: { signedBy: 'Digitally signed by', date: '2026-10-08' } }] }
 ]
 
 /** Form values are filled after the fields exist; done separately because they need the indexes. */

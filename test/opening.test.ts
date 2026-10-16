@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EDIT_SWITCH, fileKind, openRequests, PICTURE_EXTENSIONS, sortPictures } from '@shared/opening'
+import { EDIT_SWITCH, fileKind, openRequests, PICTURE_EXTENSIONS, samePath, sortPictures } from '@shared/opening'
 import { free, openPdf } from '@engine/mupdf'
 import { imageDecode } from '../src/worker/images'
 import { corpusPdfPaths } from './corpusFiles'
@@ -89,6 +89,16 @@ describe('what a file is, by its name', () => {
     for (const name of ['x.jpg', 'x.JPEG', 'x.jfif', 'x.png', 'x.webp', 'x.gif', 'x.heic', 'x.HEIF', 'x.avif', 'x.tif', 'x.tiff', 'x.bmp', 'x.svg', 'x.ico', 'x.jxl', 'x.dng', 'x.psd']) expect(fileKind(name), name).toBe('image')
     for (const name of ['x.docx', 'x.txt', 'x', '.jpg', 'folder.d/x']) expect(fileKind(name), name).toBeNull()
     expect(PICTURE_EXTENSIONS).not.toContain('pdf')
+  })
+})
+
+describe('a file that is open already', () => {
+  it('is the same file whatever the case or the slashes of its path, as Windows names it', () => {
+    expect(samePath('C:\\Docs\\Report.pdf', 'c:/docs/report.PDF')).toBe(true)
+    expect(samePath('C:\\Docs\\Report.pdf', 'C:\\Docs\\.\\Report.pdf')).toBe(true)
+    expect(samePath('C:\\Docs\\Report.pdf', 'C:\\Docs\\Report (1).pdf')).toBe(false)
+    expect(samePath('C:\\Docs\\Report.pdf', 'D:\\Docs\\Report.pdf')).toBe(false)
+    expect(samePath('', '')).toBe(false)
   })
 })
 

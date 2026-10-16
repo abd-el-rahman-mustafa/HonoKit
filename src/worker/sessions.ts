@@ -501,11 +501,12 @@ export class Sessions {
     const { pages, ...rest } = options
     const r = await exportOffice(s.bytes, { ...rest, ...(pages ? { pages } : {}), pictureFolder: folder }, s.password)
     await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, r.bytes)
+    // Through staging files (§93): a failed write never leaves a half-written document.
+    await writeStaged(path, r.bytes)
     if (r.extra.length) {
       const dir = join(dirname(path), folder)
       await mkdir(dir, { recursive: true })
-      for (const f of r.extra) await writeFile(join(dir, f.name), f.bytes)
+      for (const f of r.extra) await writeStaged(join(dir, f.name), f.bytes)
     }
     return { path, pages: r.pages, paragraphs: r.paragraphs, tables: r.tables, pictures: r.pictures }
   }
@@ -666,7 +667,10 @@ export class Sessions {
     for (const [i, part] of parts.entries()) {
       const [from, to] = ranges[i]!
       const file = join(folder, `${stem(s.name)} - ${from === to ? from + 1 : `${from + 1}-${to + 1}`}.pdf`)
-      await writeFile(file, part)
+      // Each part must open again with its pages, and is written through a staging file, as a
+      // save is (§93): a failed write never leaves a half-written part behind.
+      checkSaved(part, s.password, to - from + 1)
+      await writeStaged(file, part)
       written.push(file)
     }
     return written

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { PDFDocument } from 'pdf-lib'
 import { formFields } from '@engine/forms'
-import { free, mupdf, openPdf } from '@engine/mupdf'
+import { free, mupdf, openPdf, saveBytes } from '@engine/mupdf'
 import { renderPage } from '@engine/render'
 import { applyOperation } from '@ops/index'
 
@@ -100,6 +100,71 @@ describe('forms', () => {
     const two = await applyOperation(one.bytes, { op: 'fillForm', values: [{ page: 0, index: radios[1]!.index, value: true }] })
     expect(fields(two.bytes).filter((f) => f.name === 'colour').map((f) => f.checked)).toEqual([false, true])
     await expect(applyOperation(src, { op: 'fillForm', values: [{ page: 0, index: list.find((f) => f.name === 'fixed')!.index, value: 'x' }] })).rejects.toThrow()
+  })
+})
+
+describe('fields that share a name', () => {
+  /** A second root field named "name", a field and widget in one dictionary, as some writers repeat a name. */
+  async function withTwin(): Promise<Uint8Array> {
+    const doc = openPdf(await makeForm())
+    try {
+      const page = doc.findPage(0)
+      const w = doc.newDictionary()
+      w.put('Type', doc.newName('Annot'))
+      w.put('Subtype', doc.newName('Widget'))
+      w.put('FT', doc.newName('Tx'))
+      w.put('T', doc.newString('name'))
+      w.put('F', 4)
+      w.put('DA', doc.newString('/Helv 0 Tf 0 g'))
+      const rect = doc.newArray()
+      for (const v of [40, 40, 340, 64]) rect.push(v)
+      w.put('Rect', rect)
+      w.put('P', page)
+      const ref = doc.addObject(w)
+      page.get('Annots').push(ref)
+      doc.getTrailer().get('Root').get('AcroForm').get('Fields').push(ref)
+      return saveBytes(doc)
+    } finally {
+      free(doc)
+    }
+  }
+
+  it('filling one gives the other the same value, drawn in its own box', async () => {
+    const src = await withTwin()
+    const both = fields(src).filter((f) => f.name === 'name')
+    expect(both).toHaveLength(2)
+    const { bytes } = await applyOperation(src, { op: 'fillForm', values: [{ page: 0, index: both[0]!.index, value: 'Ahmed' }] })
+    const after = fields(bytes).filter((f) => f.name === 'name')
+    expect(after.map((f) => f.value)).toEqual(['Ahmed', 'Ahmed'])
+    expect(ink(bytes, after[1]!.box)).toBeGreaterThan(60)
+  })
+})
+
+describe('new fields', () => {
+  it('text fields take the Auto font size, so a value never clips in a short box', async () => {
+    const { bytes } = await applyOperation(await makeForm(), {
+      op: 'addFields',
+      fields: [
+        { page: 0, name: 'short', kind: 'text', box: [40, 20, 200, 32] },
+        { page: 0, name: 'longer', kind: 'multiline', box: [220, 10, 380, 80] }
+      ]
+    })
+    const doc = openPdf(bytes)
+    try {
+      const das: string[] = []
+      const page = doc.loadPage(0) as InstanceType<typeof mupdf.PDFPage>
+      for (const w of page.getWidgets()) {
+        const name = w.getName()
+        if (name === 'short' || name === 'longer') das.push(w.getObject().get('DA').asString())
+      }
+      free(page)
+      expect(das).toHaveLength(2)
+      for (const da of das) expect(da).toMatch(/\/Helv 0 Tf/)
+    } finally {
+      free(doc)
+    }
+    const filled = await applyOperation(bytes, { op: 'fillForm', values: [{ page: 0, index: fields(bytes).find((f) => f.name === 'short')!.index, value: 'A value far too long for a short box, shrunk to fit it' }] })
+    expect(fields(filled.bytes).find((f) => f.name === 'short')!.value).toMatch(/shrunk to fit/)
   })
 })
 

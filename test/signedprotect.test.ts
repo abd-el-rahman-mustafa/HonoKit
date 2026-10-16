@@ -11,8 +11,8 @@ import { makeLatinPdf } from './fixtures'
  */
 describe('protect and unlock on a signed file', () => {
   it('refuses instead of saying a file is protected when it is not', async () => {
-    const p12 = createDigitalId('Test Signer', '', '', 'secret')
-    const signed = await signWithCertificate(await makeLatinPdf(1), { p12, password: 'secret', page: 0, box: [200, 480, 380, 540], labels: { signedBy: 'Signed', date: '2026-10-08' } })
+    const p12 = createDigitalId('Test Signer', '', '', 'secret12')
+    const signed = await signWithCertificate(await makeLatinPdf(1), { p12, password: 'secret12', page: 0, box: [200, 480, 380, 540], labels: { signedBy: 'Signed', date: '2026-10-08' } })
     await expect(applyOperation(signed, { op: 'protect', userPassword: 'open-me' })).rejects.toMatchObject({ code: 'signed' })
     await expect(applyOperation(signed, { op: 'protect', userPassword: '', ownerPassword: 'owner-pass' })).rejects.toMatchObject({ code: 'signed' })
     await expect(applyOperation(signed, { op: 'unlock' })).rejects.toMatchObject({ code: 'signed' })

@@ -8,16 +8,16 @@ const LABELS = { signedBy: 'Digitally signed', date: '2026-09-30' }
 
 describe('certificate signatures', () => {
   it('makes a digital ID with an Arabic name and opens it again', () => {
-    const p12 = createDigitalId('أحمد علي', 'ahmed@example.ae', 'شركة المثال', 'secret')
-    const id = loadDigitalId(p12, 'secret')
+    const p12 = createDigitalId('أحمد علي', 'ahmed@example.ae', 'شركة المثال', 'secret12')
+    const id = loadDigitalId(p12, 'secret12')
     expect(commonName(id.cert)).toBe('أحمد علي')
     expect(() => loadDigitalId(p12, 'wrong')).toThrow(/password/)
   })
 
   it('signs, verifies, keeps the signature valid through later comments, and signs twice', async () => {
-    const p12 = createDigitalId('أحمد علي', '', '', 'secret')
+    const p12 = createDigitalId('أحمد علي', '', '', 'secret12')
     const src = await makeLatinPdf(2)
-    const signed = await signWithCertificate(src, { p12, password: 'secret', page: 0, box: [200, 480, 380, 540], reason: 'Approved', location: 'Dubai', labels: LABELS })
+    const signed = await signWithCertificate(src, { p12, password: 'secret12', page: 0, box: [200, 480, 380, 540], reason: 'Approved', location: 'Dubai', labels: LABELS })
     // The original bytes are untouched at the start of the signed file (an incremental update).
     expect(Buffer.from(signed.subarray(0, src.length)).equals(Buffer.from(src))).toBe(true)
     let sigs = await verifySignatures(signed)
@@ -37,15 +37,15 @@ describe('certificate signatures', () => {
     free(doc)
     expect((await verifySignatures(saved))[0]!.valid).toBe(true)
     // A second signature: both valid.
-    const twice = await signWithCertificate(saved, { p12, password: 'secret', page: 1, box: [200, 300, 380, 360], labels: LABELS })
+    const twice = await signWithCertificate(saved, { p12, password: 'secret12', page: 1, box: [200, 300, 380, 360], labels: LABELS })
     sigs = await verifySignatures(twice)
     expect(sigs).toHaveLength(2)
     expect(sigs.every((s) => s.valid)).toBe(true)
   }, 60_000)
 
   it('notices when signed bytes were changed', async () => {
-    const p12 = createDigitalId('Test', '', '', 'x')
-    const signed = await signWithCertificate(await makeLatinPdf(1), { p12, password: 'x', page: 0, box: [100, 100, 300, 160], labels: LABELS })
+    const p12 = createDigitalId('Test', '', '', 'xxxxxxxx')
+    const signed = await signWithCertificate(await makeLatinPdf(1), { p12, password: 'xxxxxxxx', page: 0, box: [100, 100, 300, 160], labels: LABELS })
     const tampered = Buffer.from(signed)
     // One byte early in the file (inside the signed range).
     tampered[40] = tampered[40]! ^ 0x01

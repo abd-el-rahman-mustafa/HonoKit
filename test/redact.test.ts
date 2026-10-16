@@ -50,6 +50,22 @@ describe('redaction', () => {
     }
   })
 
+  it('the tail of a longer number is not a phone number', async () => {
+    // The last groups of a social security number, a card or a reference used to match as a
+    // phone number, and the start of the identifier stayed readable. A phone number is a whole
+    // run of digit groups: one reached through separators from a digit before it is not one,
+    // nor is the head of a run that goes on past a phone number's length.
+    const lines = ['NIR 1 85 05 78 006 084 36 end', 'Ref 1234 0012 3456 7890 1234', 'Card 4532 0012 3456 7890', 'tel +33 1 23 45 67 89 ext 12', 'mobile 050 123 4567 8901 2345', 'Order 2026 0501234567']
+    const { bytes } = await applyOperation(await sample(), { op: 'addText', page: 0, x: 40, y: 100, text: lines.join('\n'), size: 10 })
+    const doc = openPdf(bytes)
+    try {
+      const found = findToRedact(doc, { words: [], patterns: ['phone'], wholeWords: true }).map((h) => h.text)
+      expect(found).toEqual(['+971 50 123 4567', '+33 1 23 45 67 89'])
+    } finally {
+      free(doc)
+    }
+  })
+
   it('reads Arabic-Indic digits in patterns', async () => {
     const { bytes } = await applyOperation(await sample(), { op: 'addText', page: 0, x: 400, y: 380, text: 'الهاتف ٠٥٠١٢٣٤٥٦٧', size: 14 })
     const doc = openPdf(bytes)

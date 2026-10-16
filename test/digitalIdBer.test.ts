@@ -50,10 +50,10 @@ function windowsShape(der: Uint8Array): Uint8Array {
 
 describe('digital IDs', () => {
   it('opens a .pfx written in BER, as Windows exports them', () => {
-    const der = createDigitalId('Test Signer', 'signer@example.com', 'Test', 'secret', 1)
+    const der = createDigitalId('Test Signer', 'signer@example.com', 'Test', 'secret12', 1)
     const ber = windowsShape(der)
     expect(ber[1]).toBe(0x80)
-    const id = loadDigitalId(ber, 'secret')
+    const id = loadDigitalId(ber, 'secret12')
     expect(id.cert.subject.getField('CN').value).toBe('Test Signer')
     expect(() => loadDigitalId(ber, 'wrong')).toThrow()
   })

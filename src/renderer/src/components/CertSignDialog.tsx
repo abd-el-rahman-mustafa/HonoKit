@@ -73,7 +73,8 @@ export function CertSignDialog({ docId }: { docId: string }) {
     setBusy(false)
     if (r) setDialog(null)
   }
-  const passwordsMatch = newPassword.length >= 4 && newPassword === again
+  // At least 8 characters (NIST SP 800-63B), as the engine requires; an existing ID opens with any.
+  const passwordsMatch = [...newPassword].length >= 8 && newPassword === again
   return (
     <Modal title={t('certSign.title')} onClose={() => setDialog(null)} width={500}>
       <div className="flex items-start gap-3 rounded-lg bg-accent-soft p-3 text-[12px] leading-snug">

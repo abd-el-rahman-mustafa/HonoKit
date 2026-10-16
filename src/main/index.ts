@@ -513,7 +513,7 @@ const handlers: Record<string, (...args: unknown[]) => unknown> = {
     return path ?? null
   },
   createDigitalId: async (details) => {
-    const d = z.object({ name: z.string().min(1).max(200), email: z.string().max(200), organisation: z.string().max(200), password: z.string().min(4).max(200) }).parse(details)
+    const d = z.object({ name: z.string().min(1).max(200), email: z.string().max(200), organisation: z.string().max(200), password: z.string().min(8).max(200) }).parse(details)
     const r = smokeFolder ? { canceled: false, filePath: join(smokeFolder, 'smoke-id.pfx') } : await dialog.showSaveDialog(window!, { defaultPath: join(app.getPath('documents'), `${d.name.replace(/[\\/:*?"<>|]/g, '')}.pfx`), filters: [{ name: 'Digital ID', extensions: ['pfx'] }] })
     if (r.canceled || !r.filePath) return null
     const { createDigitalId } = await import('@engine/sign')

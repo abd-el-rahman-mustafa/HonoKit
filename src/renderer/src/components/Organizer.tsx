@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import { Check, Ellipsis, Minus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { menuTargets, pickHow, pickPages, type PickHow } from '@shared/pagelist'
 import { apply, deletePagesAsking, tc, updateView, useStore, useT, type DocView } from '../store'
 import { openMenu } from './ContextMenu'
@@ -23,10 +23,20 @@ export function Organizer({ view }: { view: DocView }) {
   const [dragging, setDragging] = useState<number[] | null>(null)
   const [dropAt, setDropAt] = useState<number | null>(null)
   const [anchor, setAnchor] = useState<number | null>(null)
-  const [focus, setFocus] = useState(0)
+  const [focus, setFocus] = useState(Math.min(view.page, info.pages.length - 1))
   const grid = useRef<HTMLDivElement>(null)
   const count = info.pages.length
   const id = info.id
+
+  // Organize opens on the page being read, as Acrobat does: its card in view and focused, so the
+  // keyboard and the page commands start from it; a selection made earlier stays.
+  useEffect(() => {
+    const card = grid.current?.querySelector<HTMLElement>(`[data-organize-page="${Math.min(view.page, count - 1)}"]`)
+    card?.scrollIntoView({ block: 'center' })
+    card?.focus({ preventScroll: true })
+    // Only when the grid opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const setSelected = (pages: number[]): void => updateView(id, { selected: [...new Set(pages)].sort((a, b) => a - b) })
   const any = selected.length > 0
 

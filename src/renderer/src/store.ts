@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { ApiError, ApplyResult, DocInfo, OpNote, Progress, Result, SearchHit, Settings, TextSelection, UpdateState } from '@shared/ipc'
 import type { OpInput } from '@shared/ops'
-import { fileKind, type OpenRequest } from '@shared/opening'
+import { fileKind, samePath, type OpenRequest } from '@shared/opening'
 import { errorKey, formatBytes, hasKey, translate, translateCount, type CountKey, type Key } from './i18n'
 import { MAX_TRUSTED_HOSTS, safeLink, type SafeLink } from '@shared/links'
 import { beforeWindowCloses, PendingTyping, unsavedIds } from '@shared/typing'
@@ -561,6 +561,15 @@ export async function requestPassword(path: string, wrong = false): Promise<stri
  */
 export async function openPaths(paths: string[], thenTool: ToolId | null = null, edit = false): Promise<void> {
   for (const path of paths) {
+    // A file that is open already comes to the front, as in Acrobat, instead of opening twice
+    // (two tabs of one file would each save over the other's changes).
+    const open = Object.values(get().docs).find((d) => d.info.path && samePath(d.info.path, path))
+    if (open) {
+      set({ active: open.info.id, tool: null })
+      if (thenTool) openTool(thenTool)
+      else if (edit) editDoc(open.info.id)
+      continue
+    }
     let password: string | undefined
     for (let attempt = 0; ; attempt++) {
       const result = await window.api.open(path, password)
