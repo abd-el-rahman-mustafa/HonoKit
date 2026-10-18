@@ -8,6 +8,7 @@ import { free, isSigned, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
 import { drawLine, FontSet, measureLine, pageFrame, placeOverlay } from './stamp'
 import { extractLines } from './text'
 import { unlinkRemoved, xobjectsOf } from './redactresources'
+import { clearReplacementText } from './replacementtext'
 
 /**
  * Redaction, as Acrobat's (docs/decisions.md §46): mark what must go — areas, text, or
@@ -468,7 +469,8 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
       }
       const page = doc.loadPage(p) as mupdf.PDFPage
       try {
-        page.applyRedactions(false, mupdf.PDFPage.REDACT_IMAGE_PIXELS, mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_COVERED, mupdf.PDFPage.REDACT_TEXT_REMOVE)
+        // The removed text's /ActualText and /Alt go with it.
+        clearReplacementText(doc, p, () => page.applyRedactions(false, mupdf.PDFPage.REDACT_IMAGE_PIXELS, mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_COVERED, mupdf.PDFPage.REDACT_TEXT_REMOVE))
       } finally {
         free(page)
       }

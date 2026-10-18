@@ -1,4 +1,5 @@
 import { free, mupdf, type PdfDoc } from './mupdf'
+import { clearReplacementText } from './replacementtext'
 
 /** A rectangle in the page's displayed coordinates (points from the top-left, rotation applied). */
 export type RedactBox = [number, number, number, number]
@@ -61,7 +62,9 @@ export function safeRedact(doc: PdfDoc, pageIndex: number, boxes: RedactBox[], w
       handles.push(mark)
       mark.setRect(box)
     }
-    page.applyRedactions(what.blackBoxes ?? false, IMAGE[what.images ?? 'keep'], LINE_ART[what.lineArt ?? 'keep'], TEXT[what.text ?? 'remove'])
+    const p = page
+    // The removed text's /ActualText and /Alt go with it.
+    clearReplacementText(doc, pageIndex, () => p.applyRedactions(what.blackBoxes ?? false, IMAGE[what.images ?? 'keep'], LINE_ART[what.lineArt ?? 'keep'], TEXT[what.text ?? 'remove']))
   } finally {
     for (const { obj, subtype } of renamed) {
       if (subtype.isNull()) obj.delete('Subtype')

@@ -44,7 +44,7 @@ export function unlinkRemoved(doc: PdfDoc, before: Map<number, Set<number>>): nu
   for (const refs of before.values()) for (const n of refs) if (!kept.has(n)) removed.add(n)
   if (removed.size === 0) return 0
   let unlinked = 0
-  for (const group of groups(doc).values()) {
+  for (const group of groups(doc, 'XObject').values()) {
     const names: string[] = []
     group.xobj.forEach((val, key) => {
       if (val.isIndirect() && removed.has(val.asIndirect())) names.push(String(key))
@@ -64,13 +64,13 @@ export function unlinkRemoved(doc: PdfDoc, before: Map<number, Set<number>>): nu
  * own (or inside a /Resources that is) by its object number, so a dictionary shared by several
  * nodes is one group.
  */
-function groups(doc: PdfDoc): Map<string, Group> {
+function groups(doc: PdfDoc, kind: 'XObject' | 'Properties'): Map<string, Group> {
   const out = new Map<string, Group>()
   const seen = new Set<number>()
   const groupOf = (node: mupdf.PDFObject): string | null => {
     const res = node.get('Resources')
     if (!res.isDictionary()) return null
-    const xobj = res.get('XObject')
+    const xobj = res.get(kind)
     if (!xobj.isDictionary()) return null
     const key = xobj.isIndirect() ? `x${xobj.asIndirect()}` : res.isIndirect() ? `r${res.asIndirect()}` : `n${node.asIndirect()}`
     if (!out.has(key)) out.set(key, { xobj, pages: [] })
@@ -92,6 +92,25 @@ function groups(doc: PdfDoc): Map<string, Group> {
   }
   visit(doc.getTrailer().get('Root').get('Pages'), null, 0)
   return out
+}
+
+/**
+ * Removes marked-content property lists named `names` (their /ActualText or /Alt described text a
+ * redaction removed) from every page-tree /Properties dictionary that no page drawing through it
+ * still names them in. Returns how many entries went.
+ */
+export function unlinkProperties(doc: PdfDoc, names: Set<string>): number {
+  if (names.size === 0) return 0
+  let unlinked = 0
+  for (const group of groups(doc, 'Properties').values()) {
+    for (const name of names) {
+      if (group.xobj.get(name).isNull()) continue
+      if (group.pages.some((page) => drawsName(page, group.xobj, name))) continue
+      group.xobj.delete(name)
+      unlinked++
+    }
+  }
+  return unlinked
 }
 
 /**

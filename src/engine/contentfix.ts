@@ -21,7 +21,7 @@ export function repairLeading(doc: PdfDoc, pageIndex: number): number {
  * page gets its own /Contents: a stream (or a /Contents array) shared with other pages, or with a
  * form, is never changed in place, so those other pages keep drawing exactly what they drew.
  */
-function rewriteContents(doc: PdfDoc, pageIndex: number, fix: (source: string) => { text: string; count: number }): number {
+export function rewriteContents(doc: PdfDoc, pageIndex: number, fix: (source: string) => { text: string; count: number }): number {
   const page = doc.findPage(pageIndex)
   const contents = page.get('Contents')
   const items: mupdf.PDFObject[] = []
