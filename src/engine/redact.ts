@@ -42,7 +42,8 @@ const PATTERNS: Record<RedactPattern, RegExp> = {
   emiratesId: /\b784[\s-]?\d{4}[\s-]?\d{7}[\s-]?\d\b/g,
   // Case-insensitive because lines are matched folded; the checksum keeps it from matching words.
   iban: /\b[a-z]{2}\d{2}(?:\s?[a-z0-9]{4}){2,7}(?:\s?[a-z0-9]{1,4})?\b/gi,
-  card: /\b(?:\d[\s-]?){12,18}\d\b/g,
+  // A whole run of digit groups; cardEnd finds the card in it.
+  card: /\b\d(?:[\s-]?\d)*\b/g,
   date: /\b(?:\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})|\d{4}-\d{2}-\d{2})\b/g
 }
 
@@ -58,6 +59,23 @@ function luhn(digits: string): boolean {
     sum += d
   }
   return digits.length >= 13 && sum % 10 === 0
+}
+
+/**
+ * Where the card number in a run of digit groups ends, or -1. The run may carry a trailing number
+ * (an expiry, a year, a CVV), so the whole run is tried, then each shorter one ending at a group
+ * boundary, longest first. At most four digits are dropped, so a longer number (an IBAN's digits)
+ * does not match on a card-shaped start.
+ */
+function cardEnd(run: string): number {
+  const total = run.replace(/\D/g, '').length
+  for (let e = run.length; e > 0; e--) {
+    if (!/\d/.test(run[e - 1]!) || (e < run.length && /\d/.test(run[e]!))) continue
+    const digits = run.slice(0, e).replace(/\D/g, '')
+    if (total - digits.length > 4) break
+    if (digits.length >= 13 && digits.length <= 19 && luhn(digits)) return e
+  }
+  return -1
 }
 
 /** The IBAN check (ISO 13616): the number, rearranged and read in base 36, leaves 1 when divided by 97. */
@@ -125,7 +143,11 @@ export function findToRedact(doc: PdfDoc, query: { words: string[]; patterns: Re
       }
       for (const pattern of query.patterns) {
         for (const m of folded.matchAll(PATTERNS[pattern])) {
-          if (pattern === 'card' && !luhn(m[0].replace(/\D/g, ''))) continue
+          if (pattern === 'card') {
+            const end = cardEnd(m[0])
+            if (end > 0) add(m.index!, m.index! + end)
+            continue
+          }
           if (pattern === 'iban' && !ibanValid(m[0])) continue
           if (pattern === 'phone' && m[0].replace(/\D/g, '').length < 8) continue
           add(m.index!, m.index! + m[0].length)

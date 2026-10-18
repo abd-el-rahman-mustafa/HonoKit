@@ -66,6 +66,19 @@ describe('redaction', () => {
     }
   })
 
+  it('finds a card number followed by an expiry, a year or a CVV', async () => {
+    // A trailing number made the run fail the Luhn check, and the card stayed unmarked.
+    const lines = ['Visa 4111 1111 1111 1111 12/26', 'Visa 4111 1111 1111 1111 2026', 'Visa 4111 1111 1111 1111 123', 'Visa 4111 1111 1111 1111 12 26', 'Amex 3782-822463-10005 123', 'Bad 4111 1111 1111 1112 12/26', 'Long 4111 1111 1111 1111 0000 0000']
+    const { bytes } = await applyOperation(await sample(), { op: 'addText', page: 0, x: 40, y: 100, text: lines.join('\n'), size: 10 })
+    const doc = openPdf(bytes)
+    try {
+      const found = findToRedact(doc, { words: [], patterns: ['card'], wholeWords: true }).map((h) => h.text)
+      expect(found).toEqual(['4111 1111 1111 1111', '4111 1111 1111 1111', '4111 1111 1111 1111', '4111 1111 1111 1111', '4111 1111 1111 1111', '3782-822463-10005'])
+    } finally {
+      free(doc)
+    }
+  })
+
   it('reads Arabic-Indic digits in patterns', async () => {
     const { bytes } = await applyOperation(await sample(), { op: 'addText', page: 0, x: 400, y: 380, text: 'الهاتف ٠٥٠١٢٣٤٥٦٧', size: 14 })
     const doc = openPdf(bytes)
