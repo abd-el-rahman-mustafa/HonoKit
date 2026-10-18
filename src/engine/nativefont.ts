@@ -158,6 +158,8 @@ function read(num: number, font: mupdf.PDFObject, seen: Set<number>, take: <T ex
   }
   const glyphs = new Map<number, { code: number; width: number }>()
   for (const [code, text] of map) {
+    // CID 0 is .notdef whatever ToUnicode says (some subsets map it to a space too): a box.
+    if (twoByte && code === 0) continue
     const chars = [...text]
     if (chars.length !== 1) continue
     const cp = chars[0]!.codePointAt(0)!
