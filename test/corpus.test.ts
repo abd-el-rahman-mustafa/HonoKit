@@ -117,7 +117,8 @@ describe.skipIf(files.length === 0)('real PDFs in corpus/', () => {
         }
         const doc = openPdf(out)
         try {
-          const text = foldString(extractText(doc, 0))
+          // A replacement longer than a short title wraps onto new lines inside its box.
+          const text = foldString(extractText(doc, 0)).replace(/\s+/g, ' ')
           expect(text).toContain(foldString('Edited by PowerPDF'))
           mkdirSync('smoke-out/corpus', { recursive: true })
           writeFileSync(`smoke-out/corpus/${name}-edited.png`, renderPage(doc, 0, { scale: 1 }).data)
