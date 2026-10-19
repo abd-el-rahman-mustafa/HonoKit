@@ -46,6 +46,9 @@ export function renderPage(doc: PdfDoc, index: number, options: RenderOptions): 
     }
     const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, annotations !== false, usage)
     try {
+      // The resolution the page was drawn at, recorded in the JPEG and PNG: MuPDF's default (96)
+      // made a 300-dpi export open and print three times too big in other programs.
+      pixmap.setResolution(Math.max(1, Math.round(Math.abs(matrix[0]!) * 72)), Math.max(1, Math.round(Math.abs(matrix[3]!) * 72)))
       const width = pixmap.getWidth()
       const height = pixmap.getHeight()
       const format = options.format ?? 'auto'
