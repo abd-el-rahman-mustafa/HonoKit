@@ -1,6 +1,7 @@
 import type { mupdf, PdfDoc } from './mupdf'
 import { rewriteContents, tokens, type Token } from './contentfix'
 import { namesIn, unlinkProperties } from './redactresources'
+import { clearTagText } from './structtext'
 
 /**
  * Marked content can carry its own text: /ActualText (what copy and search read instead of the
@@ -19,6 +20,9 @@ import { namesIn, unlinkProperties } from './redactresources'
  * A span that names its properties in the page's /Properties is given its own dictionary (only its
  * MCID), and the named entry is removed from the page's resources, and from a dictionary the page
  * inherits or shares, once nothing drawing through them still names it.
+ *
+ * The structure tree's elements that tag a changed or removed span (by its MCID) lose theirs too
+ * (structtext.ts).
  */
 const KEYS = new Set(['/ActualText', '/Alt', '/E', '/T'])
 const DRAWS = new Set(['Tj', 'TJ', "'", '"', 'Do', 'EI', 'sh'])
@@ -35,27 +39,33 @@ interface Span {
 }
 
 export function clearReplacementText<T>(doc: PdfDoc, pageIndex: number, removal: () => T): T {
-  const before = new Map<string, number>()
+  // Each span's key, with the MCIDs of the spans that have it (one entry per span).
+  const before = new Map<string, Array<number | null>>()
   try {
     for (const span of spansOf(joinedContents(doc, pageIndex))) {
       const key = keyOf(span)
-      before.set(key, (before.get(key) ?? 0) + 1)
+      const list = before.get(key) ?? []
+      list.push(mcidOf(doc, pageIndex, span))
+      before.set(key, list)
     }
   } catch {
     // An unreadable page: every span counts as changed below.
   }
   const result = removal()
   const retired = new Set<string>()
+  const changed = new Set<number>()
   rewriteContents(doc, pageIndex, (source) => {
     const edits: Array<{ start: number; end: number; text: string }> = []
     for (const span of spansOf(source)) {
       if (span.start < 0) continue
       const key = keyOf(span)
-      const left = before.get(key) ?? 0
-      if (left > 0) {
-        before.set(key, left - 1)
+      const left = before.get(key)
+      if (left && left.length > 0) {
+        left.shift()
         continue
       }
+      const mcid = mcidOf(doc, pageIndex, span)
+      if (mcid !== null) changed.add(mcid)
       if (span.named) {
         const dict = namedProperties(doc, pageIndex, span.named)
         if (!dict || ![...KEYS].some((k) => !dict.get(k.slice(1)).isNull())) continue
@@ -73,7 +83,20 @@ export function clearReplacementText<T>(doc: PdfDoc, pageIndex: number, removal:
     return { text, count: edits.length }
   })
   if (retired.size > 0) retire(doc, pageIndex, retired)
+  // Spans the removal took away altogether.
+  for (const list of before.values()) for (const mcid of list) if (mcid !== null) changed.add(mcid)
+  clearTagText(doc, pageIndex, changed)
   return result
+}
+
+/** The span's marked-content ID, from its inline dictionary or the named one. */
+function mcidOf(doc: PdfDoc, pageIndex: number, span: Span): number | null {
+  if (span.named) {
+    const id = namedProperties(doc, pageIndex, span.named)?.get('MCID')
+    return id?.isNumber() ? id.asNumber() : null
+  }
+  const m = /\/MCID (\d+)/.exec(span.props)
+  return m ? Number(m[1]) : null
 }
 
 /** Drops property lists this page no longer names from its own resources and the page tree's. */

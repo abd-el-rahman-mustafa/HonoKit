@@ -9,6 +9,7 @@ import { drawLine, FontSet, measureLine, pageFrame, placeOverlay } from './stamp
 import { extractLines } from './text'
 import { unlinkRemoved, xobjectsOf } from './redactresources'
 import { clearReplacementText } from './replacementtext'
+import { dropRemovedAnnotRefs } from './structtext'
 
 /**
  * Redaction, as Acrobat's (docs/decisions.md §46): mark what must go — areas, text, or
@@ -523,6 +524,8 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
     const after = xobjectNames(doc, pages)
     const overlays = new Map([...after].map(([p, names]) => [p, new Set([...names].filter((n) => !before.get(p)?.has(n)))]))
     if (options.sanitize) sanitize(doc)
+    // A removed comment's tag would still write it, its text included, into the file.
+    dropRemovedAnnotRefs(doc)
     const out = rewritten(doc)
     // Check the saved file: nothing readable is left under any mark.
     const check = openPdf(out, password)

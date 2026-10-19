@@ -270,7 +270,7 @@ function separateRepeats(doc: PdfDoc): void {
 // --- The catalogue after rearranging ------------------------------------------------------------
 
 /** The entries of a number tree (/Nums, /Kids), flattened and sorted by key. */
-function numberTree(tree: mupdf.PDFObject): Array<[number, mupdf.PDFObject]> {
+export function numberTree(tree: mupdf.PDFObject): Array<[number, mupdf.PDFObject]> {
   const out: Array<[number, mupdf.PDFObject]> = []
   walkTree(tree, 'Nums', 0, new Set(), (key, value) => {
     if (key.isNumber()) out.push([key.asNumber(), value])
@@ -280,7 +280,7 @@ function numberTree(tree: mupdf.PDFObject): Array<[number, mupdf.PDFObject]> {
 }
 
 /** The entries of a name tree (/Names, /Kids), flattened. */
-function nameTree(tree: mupdf.PDFObject): Array<[mupdf.PDFObject, mupdf.PDFObject]> {
+export function nameTree(tree: mupdf.PDFObject): Array<[mupdf.PDFObject, mupdf.PDFObject]> {
   const out: Array<[mupdf.PDFObject, mupdf.PDFObject]> = []
   walkTree(tree, 'Names', 0, new Set(), (key, value) => out.push([key, value]))
   return out
