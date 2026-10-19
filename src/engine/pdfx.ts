@@ -28,6 +28,28 @@ export interface PrintStandard {
 }
 
 const XMP_PDFX = 'http://www.npes.org/pdfx/ns/id/'
+const XMP_PDFA = 'http://www.aiim.org/pdfa/ns/id/'
+const XMP_PDFUA = 'http://www.aiim.org/pdfua/ns/id/'
+
+/**
+ * The prefixes the packet binds to the namespace `uri`, with the usual one first (packets that
+ * leave it undeclared still use it). The identification is the namespace, not the prefix: a file
+ * may write `ida:part` for PDF/A.
+ */
+function prefixesFor(xmp: string, uri: string, usual: string): string[] {
+  const out = new Set([usual])
+  for (const m of xmp.slice(0, 1_000_000).matchAll(/xmlns:([A-Za-z_][A-Za-z0-9_-]{0,40})\s*=\s*["']([^"']{0,200})["']/g)) if (m[2]!.trim() === uri) out.add(m[1]!)
+  return [...out]
+}
+
+/** A property of the namespace `uri` under any prefix the packet gives it. */
+function xmpValueIn(xmp: string, uri: string, usual: string, local: string): string {
+  for (const p of prefixesFor(xmp, uri, usual)) {
+    const v = xmpValue(xmp, `${p}:${local}`)
+    if (v) return v
+  }
+  return ''
+}
 
 function text(v: mupdf.PDFObject): string {
   return v.isString() ? v.asString() : v.isName() ? v.asName() : ''
@@ -81,8 +103,8 @@ export function readPrintStandard(doc: PdfDoc): PrintStandard | null {
   const info = trailer.get('Info')
   const xmp = metadataOf(doc)
   const fromInfo = (key: string): string => (info.isDictionary() ? text(info.get(key)).replace(/[\0<>&]/g, '').trim() : '')
-  const version = fromInfo('GTS_PDFXVersion') || (xmp.includes(XMP_PDFX) ? xmpValue(xmp, 'pdfxid:GTS_PDFXVersion').replace(/[\0<>&]/g, '') : '')
-  const conformance = fromInfo('GTS_PDFXConformance') || (xmp.includes(XMP_PDFX) ? xmpValue(xmp, 'pdfxid:GTS_PDFXConformance').replace(/[\0<>&]/g, '') : '')
+  const version = fromInfo('GTS_PDFXVersion') || (xmp.includes(XMP_PDFX) ? xmpValueIn(xmp, XMP_PDFX, 'pdfxid', 'GTS_PDFXVersion').replace(/[\0<>&]/g, '') : '')
+  const conformance = fromInfo('GTS_PDFXConformance') || (xmp.includes(XMP_PDFX) ? xmpValueIn(xmp, XMP_PDFX, 'pdfxid', 'GTS_PDFXConformance').replace(/[\0<>&]/g, '') : '')
   const trapped = info.isDictionary() && info.get('Trapped').isName() ? info.get('Trapped').asName() : ''
   const list = root.get('OutputIntents')
   const intents = list.isArray() && list.length > 0 ? list : null
@@ -169,10 +191,10 @@ export function withdrawClaims(doc: PdfDoc, reasons: { untagged: boolean }): voi
   const meta = root.get('Metadata')
   if (!meta.isStream()) return
   const xmp = metadataOf(doc)
-  if (!/pdfuaid|pdfaid/.test(xmp)) return
-  let next = dropProperty(xmp, 'pdfuaid:part')
-  next = dropProperty(next, 'pdfuaid:rev')
-  if (/^a$/i.test(xmpValue(next, 'pdfaid:conformance'))) for (const p of ['pdfaid:part', 'pdfaid:conformance', 'pdfaid:amd', 'pdfaid:rev']) next = dropProperty(next, p)
+  if (!/pdfuaid|pdfaid/.test(xmp) && !xmp.includes(XMP_PDFA) && !xmp.includes(XMP_PDFUA)) return
+  let next = xmp
+  for (const ua of prefixesFor(xmp, XMP_PDFUA, 'pdfuaid')) for (const p of ['part', 'rev']) next = dropProperty(next, `${ua}:${p}`)
+  for (const a of prefixesFor(xmp, XMP_PDFA, 'pdfaid')) if (/^a$/i.test(xmpValue(next, `${a}:conformance`))) for (const p of ['part', 'conformance', 'amd', 'rev']) next = dropProperty(next, `${a}:${p}`)
   if (next === xmp) return
   const stream = doc.addStream(next, {})
   meta.forEach((v, key) => {

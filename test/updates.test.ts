@@ -205,6 +205,16 @@ describe('Combine, extract and split keep the PDF/X output intent and identifica
     expect(second.xmp).not.toContain('pdfaid:conformance')
     expect(second.xmp).not.toContain('pdfaid:part')
   })
+
+  it('reads the identification by its namespace, whatever prefix the file gives it', async () => {
+    const ns = 'xmlns:ida="http://www.aiim.org/pdfa/ns/id/" xmlns:idua="http://www.aiim.org/pdfua/ns/id/" xmlns:idx="http://www.npes.org/pdfx/ns/id/"'
+    const tagged = await makePrintPdf({ condition: 'FOGRA39', claims: `${ns} idx:GTS_PDFXVersion="PDF/X-4" ida:part="2" ida:conformance="A" idua:part="1"`, taggedFirst: true })
+    expect(declared(mergePdfs([{ bytes: tagged }, { bytes: tagged }])).version).toBe('PDF/X-4')
+    const second = declared(keepPages(tagged, [1]))
+    expect(second.xmp).toContain('PDF/X-4')
+    expect(second.xmp).not.toContain('idua:part')
+    expect(second.xmp).not.toContain('ida:conformance')
+  })
 })
 
 // --- annotations without an appearance stream ----------------------------------------------------
