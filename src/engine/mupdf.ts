@@ -114,12 +114,17 @@ export interface Rights {
   forms: boolean
   copy: boolean
   print: boolean
+  /** Printing at full quality; without it, pages print only as low-resolution pictures. */
+  printHq: boolean
 }
+
+/** The resolution a file limited to low-resolution printing prints at, as Acrobat does. */
+export const LOW_RES_PRINT_DPI = 150
 
 export function rightsOf(doc: PdfDoc): Rights {
   const has = (p: mupdf.DocumentPermission): boolean => doc.hasPermission(p)
   const r = { edit: has('edit'), assemble: has('assemble'), annotate: has('annotate'), forms: has('form'), copy: has('copy'), print: has('print') }
-  return { encrypted: isEncrypted(doc), full: Object.values(r).every(Boolean), ...r }
+  return { encrypted: isEncrypted(doc), full: Object.values(r).every(Boolean), ...r, printHq: r.print && has('print-hq') }
 }
 
 /** Cheap snapshot, used between edits so undo is fast. */

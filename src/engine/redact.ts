@@ -349,6 +349,77 @@ function sanitize(doc: PdfDoc): void {
   }
 }
 
+/**
+ * Metadata, private data and associated files sit on images, fonts and forms too: an image's XMP
+ * can carry the camera and the place it was taken. Only an entry holding that kind of data goes:
+ * a resource map may call one of its resources Metadata or PieceInfo, and that name stays.
+ * Runs on the saved file, opened again: walking every object of a document that redaction has
+ * just changed in memory made MuPDF read some content streams back wrongly.
+ */
+function withoutOwnedHiddenData(bytes: Uint8Array, password?: string): Uint8Array {
+  const doc = openPdf(bytes, password)
+  try {
+    return stripOwnedHiddenData(doc) ? rewritten(doc) : bytes
+  } finally {
+    free(doc)
+  }
+}
+
+function stripOwnedHiddenData(doc: PdfDoc): boolean {
+  const isType = (o: mupdf.PDFObject, key: string, value: string): boolean => {
+    const v = o.get(key)
+    return v.isName() && v.asName() === value
+  }
+  const isFilespec = (o: mupdf.PDFObject): boolean => o.isDictionary() && !o.isStream() && (isType(o, 'Type', 'Filespec') || !o.get('EF').isNull() || !o.get('F').isNull() || !o.get('UF').isNull())
+  let changed = false
+  // Every object the document reaches, from the trailer.
+  const seen = new Set<number>()
+  const stack: mupdf.PDFObject[] = [doc.getTrailer()]
+  const count = doc.countObjects()
+  for (let budget = 5_000_000; stack.length > 0 && budget > 0; budget--) {
+    let obj = stack.pop()!
+    if (obj.isIndirect()) {
+      const n = obj.asIndirect()
+      if (seen.has(n)) continue
+      seen.add(n)
+      if (n <= 0 || n >= count) continue
+      obj = obj.resolve()
+    }
+    if (obj.isArray()) {
+      obj.forEach((v) => stack.push(v))
+      continue
+    }
+    if (!obj.isDictionary()) continue
+    strip(obj)
+    obj.forEach((v) => stack.push(v))
+  }
+  return changed
+
+  function strip(obj: mupdf.PDFObject): boolean {
+    const before = changed
+    const metadata = obj.get('Metadata')
+    if (metadata.isStream() && (isType(metadata, 'Type', 'Metadata') || isType(metadata, 'Subtype', 'XML'))) {
+      obj.delete('Metadata')
+      changed = true
+    }
+    const piece = obj.get('PieceInfo')
+    if (piece.isDictionary() && !piece.isStream()) {
+      obj.delete('PieceInfo')
+      changed = true
+    }
+    const af = obj.get('AF')
+    if (af.isArray() && af.length > 0) {
+      let files = true
+      for (let i = 0; i < af.length; i++) if (!isFilespec(af.get(i))) files = false
+      if (files) {
+        obj.delete('AF')
+        changed = true
+      }
+    }
+    return changed !== before
+  }
+}
+
 export interface RedactOptions {
   fill: [number, number, number]
   /** Written in each box, as Acrobat's overlay text. */
@@ -526,7 +597,7 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
     if (options.sanitize) sanitize(doc)
     // A removed comment's tag would still write it, its text included, into the file.
     dropRemovedAnnotRefs(doc)
-    const out = rewritten(doc)
+    const out = options.sanitize ? withoutOwnedHiddenData(rewritten(doc), password) : rewritten(doc)
     // Check the saved file: nothing readable is left under any mark.
     const check = openPdf(out, password)
     let leftover = 0

@@ -201,4 +201,33 @@ describe('a file whose author does not allow copying', () => {
     const doc = await sessions.openFile(await file('copy.pdf', makeRestrictedPdf(1)))
     expect(await sessions.exportImages(doc.id, [0], 'png', 72, join(dir, 'png'))).toHaveLength(1)
   })
+
+  it('does not compare the text of a file whose author does not allow copying', async () => {
+    const text = { kind: 'text', name: 'pasted', text: 'Page 1 Marker1' } as const
+    const doc = await sessions.openFile(await file('nocopy.pdf', makeRestrictedPdf(1, { copy: false })))
+    await expect(sessions.compare({ kind: 'doc', docId: doc.id }, text, {} as never)).rejects.toMatchObject({ code: 'restricted' })
+    const other = await file('nocopy2.pdf', makeRestrictedPdf(1, { copy: false }))
+    await expect(sessions.compare(text, { kind: 'file', path: other }, {} as never)).rejects.toMatchObject({ code: 'restricted' })
+    // A file that allows copying still compares.
+    const ok = await sessions.openFile(await file('copy.pdf', makeRestrictedPdf(1)))
+    const r = await sessions.compare({ kind: 'doc', docId: ok.id }, text, {} as never)
+    sessions.compareClose(r.token)
+  })
+
+  it('prints a file limited to low-resolution printing at no more than 150 dpi', async () => {
+    const { mupdf } = await import('@engine/mupdf')
+    const width = async (name: string, bytes: Promise<Uint8Array>): Promise<number> => {
+      const doc = await sessions.openFile(await file(name, bytes))
+      const [out] = await sessions.exportImages(doc.id, [0], 'jpeg', 300, join(dir, name + '-print'), undefined, 'print')
+      const image = new mupdf.Image(readFileSync(out!))
+      try {
+        return image.getWidth()
+      } finally {
+        image.destroy()
+      }
+    }
+    // The fixture's pages are 400 pt wide.
+    expect(await width('hq.pdf', makeRestrictedPdf(1))).toBe(Math.round((400 * 300) / 72))
+    expect(await width('lowres.pdf', makeRestrictedPdf(1, { printHq: false }))).toBeLessThanOrEqual(Math.ceil((400 * 150) / 72))
+  })
 })

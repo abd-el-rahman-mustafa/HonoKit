@@ -215,6 +215,54 @@ describe('Remove hidden information (redaction with sanitize)', () => {
       free(doc)
     }
   })
+
+  it('removes metadata, private data and associated files from images and forms, keeping resource names', async () => {
+    const src = withDoc(await makeLatinPdf(1), (doc) => {
+      const xmp = (): mupdf.PDFObject => doc.addStream('<x:xmpmeta><exif:GPSLatitude>25,12N</exif:GPSLatitude></x:xmpmeta>', dict(doc, { Type: doc.newName('Metadata'), Subtype: doc.newName('XML') }))
+      const image = doc.addStream('\x80', dict(doc, { Type: doc.newName('XObject'), Subtype: doc.newName('Image'), Width: 1, Height: 1, BitsPerComponent: 8, ColorSpace: doc.newName('DeviceGray'), Metadata: xmp() }))
+      const bbox = doc.newArray()
+      for (const v of [0, 0, 10, 10]) bbox.push(v)
+      const files = doc.newArray()
+      files.push(doc.addObject(dict(doc, { Type: doc.newName('Filespec'), F: doc.newString('source.psd') })))
+      const form = doc.addStream('0 0 10 10 re f', dict(doc, { Type: doc.newName('XObject'), Subtype: doc.newName('Form'), BBox: bbox, Metadata: xmp(), AF: files, PieceInfo: dict(doc, { Illustrator: dict(doc, { Private: doc.newString('layers') }) }) }))
+      const page = doc.findPage(0)
+      page.get('Resources').put('XObject', dict(doc, { Im1: image, Fm1: form }))
+      const contents = doc.addStream('q 10 0 0 10 300 40 cm /Im1 Do Q q 1 0 0 1 300 60 cm /Fm1 Do Q', {})
+      const old = page.get('Contents')
+      if (old.isArray()) old.push(contents)
+      else {
+        const all = doc.newArray()
+        all.push(old)
+        all.push(contents)
+        page.put('Contents', all)
+      }
+      // A producer may call a resource Metadata or PieceInfo: those names are not hidden data.
+      const look = doc.addStream('q 10 0 0 10 0 0 cm /Metadata Do Q q 10 0 0 10 10 0 cm /PieceInfo Do Q', dict(doc, { Type: doc.newName('XObject'), Subtype: doc.newName('Form'), BBox: bbox, Resources: dict(doc, { XObject: dict(doc, { Metadata: image, PieceInfo: image }) }) }))
+      const rect = doc.newArray()
+      for (const v of [300, 300, 320, 310]) rect.push(v)
+      page.get('Annots').push(doc.addObject(dict(doc, { Type: doc.newName('Annot'), Subtype: doc.newName('Stamp'), Rect: rect, AP: dict(doc, { N: look }) })))
+    })
+    const marked = await applyOperation(src, { op: 'redactMark', marks: [{ page: 0, box: [35, 75, 250, 105] }] })
+    const r = await applyOperation(marked.bytes, { op: 'redactApply', fill: '#000000', sanitize: true })
+    const doc = openPdf(r.bytes)
+    try {
+      const xobjects = doc.findPage(0).get('Resources').get('XObject')
+      const kinds: string[] = []
+      xobjects.forEach((value) => {
+        kinds.push(value.get('Subtype').asName())
+        for (const key of ['Metadata', 'AF', 'PieceInfo']) expect(value.get(key).isNull()).toBe(true)
+      })
+      expect(kinds).toEqual(expect.arrayContaining(['Image', 'Form']))
+      const annots = doc.findPage(0).get('Annots')
+      let stamp: mupdf.PDFObject | undefined
+      for (let i = 0; i < annots.length; i++) if (annots.get(i).get('Subtype').asName() === 'Stamp') stamp = annots.get(i)
+      const names = stamp!.get('AP').get('N').get('Resources').get('XObject')
+      for (const name of ['Metadata', 'PieceInfo']) expect(names.get(name).isStream()).toBe(true)
+      expect(Buffer.from(doc.saveToBuffer('decompress').asUint8Array()).toString('latin1')).not.toContain('GPSLatitude')
+    } finally {
+      free(doc)
+    }
+  })
 })
 
 // --- 4. Bookmarks ----------------------------------------------------------------------------

@@ -21,7 +21,7 @@ import type { OpInput } from '@shared/ops'
 import { BRAND } from '@shared/brand'
 import { PdfError } from '@engine/errors'
 import { imagesToPdf, pdfToImages } from '@engine/images'
-import { checkSaved, free, needsOpenPassword, openPdf, rightsOf, saveBytes, SAVE_FINAL, type PdfDoc } from '@engine/mupdf'
+import { checkSaved, free, LOW_RES_PRINT_DPI, needsOpenPassword, openPdf, rightsOf, saveBytes, SAVE_FINAL, type PdfDoc } from '@engine/mupdf'
 import { keepPages, mergePdfs, splitByRanges, blankPdf } from '@engine/pages'
 import { pageGeometry, renderPage, whiteMargins, type RenderedPage } from '@engine/render'
 import { extractLines, searchLines, selectText, type Selection, type SelectUnit, type TextLine } from '@engine/text'
@@ -536,6 +536,13 @@ export class Sessions {
         }
         name = basename(source.path)
       }
+      // The comparison shows and lists the file's words, so it needs the copy right.
+      try {
+        assertCanCopy(rightsOf(doc))
+      } catch (error) {
+        free(doc)
+        throw error
+      }
       const pages = Array.from({ length: doc.countPages() }, (_, i) => {
         const g = pageGeometry(doc, i)
         return { width: g.width, height: g.height }
@@ -678,8 +685,15 @@ export class Sessions {
 
   async exportImages(id: string, pages: number[] | null, format: 'png' | 'jpeg', dpi: number, folder: string, progress?: (f: number) => void, annotations: boolean | 'print' | 'print-none' = true): Promise<string[]> {
     const s = this.get(id)
-    // Printing renders pages as pictures too; that is the print right, not copying.
-    if (annotations !== 'print' && annotations !== 'print-none') assertCanCopy(rightsOf(s.doc))
+    const rights = rightsOf(s.doc)
+    // Printing renders pages as pictures too; that is the print right, not copying. A file limited
+    // to low-resolution printing prints at no more than LOW_RES_PRINT_DPI, whatever was asked.
+    if (annotations === 'print' || annotations === 'print-none') {
+      if (!rights.print) throw new PdfError('restricted', 'The author of this PDF does not allow printing.')
+      if (!rights.printHq) dpi = Math.min(dpi, LOW_RES_PRINT_DPI)
+    } else {
+      assertCanCopy(rights)
+    }
     await mkdir(folder, { recursive: true })
     const list = pages ?? Array.from({ length: s.doc.countPages() }, (_, i) => i)
     const written: string[] = []
