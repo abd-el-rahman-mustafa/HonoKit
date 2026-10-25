@@ -115,16 +115,29 @@ export function unlinkProperties(doc: PdfDoc, names: Set<string>): number {
 
 /**
  * Whether `page` still uses `name` from `xobj`: as a name in its content, or in a form of that
- * dictionary that has no /Resources of its own (it draws through the page's). A content stream
- * that cannot be read fails the redaction rather than guessing.
+ * dictionary that draws through it. A form draws through it when it has no /Resources of its own,
+ * when its /Resources is the very dictionary the page uses, or when its /Resources names this
+ * same dictionary of names — all three are ordinary ways to write a shared one, and reading only
+ * the first took a name a form still drew with, so a picture vanished from a page that had
+ * nothing redacted on it (§102). A content stream that cannot be read fails the redaction rather
+ * than guessing.
  */
 function drawsName(page: mupdf.PDFObject, xobj: mupdf.PDFObject, name: string): boolean {
   const streams: mupdf.PDFObject[] = []
   const contents = page.get('Contents')
   if (contents.isArray()) for (let i = 0; i < contents.length; i++) streams.push(contents.get(i))
   else if (contents.isStream()) streams.push(contents)
+  const numOf = (o: mupdf.PDFObject): number => (o.isIndirect() ? o.asIndirect() : -1)
+  const pageRes = numOf(page.getInheritable('Resources'))
+  const dict = numOf(xobj)
+  /** Whether a form's /Resources leads back to this very dictionary of names. */
+  const through = (res: mupdf.PDFObject): boolean => {
+    if (!res.isDictionary()) return true
+    if (pageRes > 0 && numOf(res) === pageRes) return true
+    return dict > 0 && ['XObject', 'Properties'].some((k) => numOf(res.get(k)) === dict)
+  }
   xobj.forEach((val) => {
-    if (val.isStream() && val.get('Subtype').toString() === '/Form' && !val.get('Resources').isDictionary()) streams.push(val)
+    if (val.isStream() && val.get('Subtype').toString() === '/Form' && through(val.get('Resources'))) streams.push(val)
   })
   for (const s of streams) {
     let text: string

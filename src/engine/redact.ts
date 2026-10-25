@@ -201,6 +201,24 @@ export function redactionMarks(doc: PdfDoc): Array<{ page: number; box: Box }> {
   return out
 }
 
+/** The object numbers of the marks on `pages`, to take what belongs to them with them (§102). */
+function redactionMarkObjects(doc: PdfDoc, pages: number[]): number[] {
+  const out: number[] = []
+  for (const p of pages) {
+    const page = doc.loadPage(p) as mupdf.PDFPage
+    try {
+      for (const a of page.getAnnotations()) {
+        if (a.getType() !== 'Redact') continue
+        const obj = a.getObject()
+        if (obj.isIndirect()) out.push(obj.asIndirect())
+      }
+    } finally {
+      free(page)
+    }
+  }
+  return out
+}
+
 /** Removes the one mark at `box` (as `redactionMarks` gave it). */
 export function removeRedactionMark(bytes: Uint8Array, pageIndex: number, box: Box, password?: string): Uint8Array {
   const doc = openPdf(bytes, password)
@@ -209,7 +227,12 @@ export function removeRedactionMark(bytes: Uint8Array, pageIndex: number, box: B
     try {
       const mark = page.getAnnotations().find((a) => a.getType() === 'Redact' && (a.getRect() as Box).every((v, i) => Math.abs(v - box[i]!) < 1))
       if (!mark) throw new PdfError('bad-arguments', 'That mark is no longer there.')
+      // What belongs to the mark goes with it: a reply to it, and its pop-up, would otherwise be
+      // left answering a mark that is no longer there, and keep it in the file (§102).
+      const obj = mark.getObject()
+      const num = obj.isIndirect() ? obj.asIndirect() : -1
       page.deleteAnnotation(mark)
+      if (num > 0) removeThreads(doc, [num])
     } finally {
       free(page)
     }
@@ -222,14 +245,23 @@ export function removeRedactionMark(bytes: Uint8Array, pageIndex: number, box: B
 export function clearRedactionMarks(bytes: Uint8Array, password?: string): Uint8Array {
   const doc = openPdf(bytes, password)
   try {
+    const marks: number[] = []
     for (let p = 0; p < doc.countPages(); p++) {
       const page = doc.loadPage(p) as mupdf.PDFPage
       try {
-        for (const a of page.getAnnotations()) if (a.getType() === 'Redact') page.deleteAnnotation(a)
+        for (const a of page.getAnnotations()) {
+          if (a.getType() !== 'Redact') continue
+          const obj = a.getObject()
+          if (obj.isIndirect()) marks.push(obj.asIndirect())
+          page.deleteAnnotation(a)
+        }
       } finally {
         free(page)
       }
     }
+    // What belongs to the marks goes with them (§102): a reply left answering a mark that is no
+    // longer there would be listed as a comment, and would keep the mark in the file.
+    if (marks.length) removeThreads(doc, marks)
     return saveBytes(doc)
   } finally {
     free(doc)
@@ -451,6 +483,9 @@ function removeCovered(doc: PdfDoc, pageIndex: number, boxes: Box[]): void {
   const annots: number[] = []
   const widgets: mupdf.PDFObject[] = []
   try {
+    // An entry written as a dictionary of its own in /Annots has no object number to collect: it
+    // is taken off the page here, or a comment under a mark stayed in the file (§102).
+    const inline: mupdf.PDFAnnotation[] = []
     for (const a of page.getAnnotations()) {
       const type = a.getType()
       // The marks themselves go when applied; a pop-up goes with its note.
@@ -459,8 +494,10 @@ function removeCovered(doc: PdfDoc, pageIndex: number, boxes: Box[]): void {
       if (!boxes.some((m) => overlaps(m, b))) continue
       const obj = a.getObject()
       if (obj.isIndirect()) annots.push(obj.asIndirect())
+      else inline.push(a)
     }
     for (const w of page.getWidgets()) if (boxes.some((m) => overlaps(m, w.getBounds() as Box))) widgets.push(w.getObject())
+    for (const a of inline) page.deleteAnnotation(a)
   } finally {
     free(page)
   }
@@ -552,6 +589,8 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
         p,
         marks.filter((m) => m.page === p).map((m) => m.box)
       )
+    // Collected before the marks are applied and taken off the pages; their replies go after.
+    const markObjects = redactionMarkObjects(doc, pages)
     const drawn = xobjectsOf(doc, pages)
     for (const p of pages) {
       // MuPDF's rewrite of the page misreads T*, ' and " after a Td and can move text far from the
@@ -569,6 +608,9 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
         free(page)
       }
     }
+    // A reply to a mark goes with the mark (§102): left behind, its /IRT would keep the mark
+    // dictionary — the area it covered, and who marked it — in the saved file.
+    if (markObjects.length) removeThreads(doc, markObjects)
     // What went may still be named by resources the page shared with others (inherited, shared).
     unlinkRemoved(doc, drawn)
     // The boxes (and labels) are drawn onto the pages themselves, so they cannot be removed.

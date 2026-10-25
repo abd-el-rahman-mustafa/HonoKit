@@ -416,24 +416,41 @@ function unsafe(r: Removal): boolean {
   return r.far > 0 || r.left > 0
 }
 
-/** A page region drawn at `k` pixels per point, as RGB. */
+/**
+ * The most pixels a region is ever drawn at (72 MB as RGB): larger than any ordinary page at
+ * `k = 2`. A region past it is not judged at all, rather than asked for (§103).
+ */
+const MAX_REGION_PIXELS = 24_000_000
+
+/** A page region drawn at `k` pixels per point, as RGB; empty when the region cannot be drawn. */
 function regionPixels(doc: PdfDoc, pageIndex: number, box: Box, k = 2): Uint8ClampedArray {
-  const bbox: Box = [Math.floor(box[0] * k), Math.floor(box[1] * k), Math.ceil(box[2] * k), Math.ceil(box[3] * k)]
-  if (bbox[2] <= bbox[0] || bbox[3] <= bbox[1]) return new Uint8ClampedArray(0)
-  const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, bbox, false)
+  const page = doc.loadPage(pageIndex)
   try {
-    pix.clear(255)
-    const dev = new mupdf.DrawDevice(mupdf.Matrix.identity, pix)
-    const page = doc.loadPage(pageIndex)
+    // A line far larger than its page — text written at a size of thousands of points, which a
+    // broken or hostile file can hold — asked MuPDF for gigabytes at once ("malloc failed", with
+    // the whole app's memory gone with it). The region is kept inside the page, and one still too
+    // large is left unjudged: the caller then skips that line (§103).
+    const bounds = page.getBounds() as Box
+    const clipped: Box = [Math.max(box[0], bounds[0]), Math.max(box[1], bounds[1]), Math.min(box[2], bounds[2]), Math.min(box[3], bounds[3])]
+    const bbox: Box = [Math.floor(clipped[0] * k), Math.floor(clipped[1] * k), Math.ceil(clipped[2] * k), Math.ceil(clipped[3] * k)]
+    if (bbox[2] <= bbox[0] || bbox[3] <= bbox[1]) return new Uint8ClampedArray(0)
+    if ((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) > MAX_REGION_PIXELS) return new Uint8ClampedArray(0)
+    const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, bbox, false)
     try {
-      page.run(dev, mupdf.Matrix.scale(k, k))
+      pix.clear(255)
+      const dev = new mupdf.DrawDevice(mupdf.Matrix.identity, pix)
+      try {
+        page.run(dev, mupdf.Matrix.scale(k, k))
+      } finally {
+        dev.close()
+        free(dev)
+      }
+      return new Uint8ClampedArray(pix.getPixels())
     } finally {
-      dev.close()
-      free(page, dev)
+      pix.destroy()
     }
-    return new Uint8ClampedArray(pix.getPixels())
   } finally {
-    pix.destroy()
+    free(page)
   }
 }
 

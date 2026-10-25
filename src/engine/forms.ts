@@ -2,6 +2,7 @@ import { PDFDocument, rgb } from 'pdf-lib'
 import { detectDirection } from './bidi'
 import { PdfError } from './errors'
 import { free, isSigned, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
+import { defaultFieldText } from './passwordfields'
 import { contentOf, drawLine, FontSet, measureLine } from './stamp'
 import { extractLines } from './text'
 import { isIdentity, shownTurn, turnMatrix } from './upright'
@@ -411,8 +412,12 @@ export async function fillForm(bytes: Uint8Array, values: FieldValue[], password
         for (let o: mupdf.PDFObject = d.w.getObject(), k = 0; o.isDictionary() && k < 32; o = o.get('Parent'), k++) o.delete('RV')
         const password = (fieldFlags(d.w.getObject()) & FF_PASSWORD) !== 0
         if (isComb(d.w) && !password) continue
+        // A password field is drawn from the value the file will hold — its default, or nothing —
+        // never from what was typed, so the saved look does not say how long the password was
+        // (§99). The value itself is taken out of every password field as the file is written.
+        const shown = password ? (defaultFieldText(fieldOf(d.w.getObject())) ?? '') : d.value
         for (const { obj, da } of [{ obj: d.w.getObject(), da: d.da }, ...d.others]) {
-          await drawTextField(doc, obj, d.value, da)
+          await drawTextField(doc, obj, shown, da)
           if (da && obj.get('DA').isString()) obj.put('DA', doc.newString(da))
         }
       }
@@ -423,8 +428,11 @@ export async function fillForm(bytes: Uint8Array, values: FieldValue[], password
     const acro = doc.getTrailer().get('Root').get('AcroForm')
     if (acro.isDictionary()) acro.delete('NeedAppearances')
     // A hybrid form's XFA would bring the old values back in Acrobat (see xfaKind).
-    dropXfa(doc)
-    return saveBytes(doc)
+    // Taking the packet out only unlinks it: a plain save keeps what nothing points at, so the
+    // old values would still be in the file for anyone to read back (§100). The file is written
+    // again with its unused objects collected whenever a packet went.
+    const strippedXfa = dropXfa(doc)
+    return saveBytes(doc, strippedXfa ? 'garbage=deduplicate,compress' : undefined)
   } finally {
     free(doc)
   }

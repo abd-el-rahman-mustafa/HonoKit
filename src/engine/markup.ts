@@ -316,6 +316,31 @@ function find(page: mupdf.PDFPage, index: number, box: Box): mupdf.PDFAnnotation
 const numOf = (o: mupdf.PDFObject): number => (o.isIndirect() ? o.asIndirect() : -1)
 
 /**
+ * Whether the annotation is a reply at all: its chain of /IRT leads to a comment, as the panel
+ * reads it (`commentThreads`). Two comments whose /IRT entries point at each other, or any other
+ * loop, have no comment at their head; each is shown as a comment of its own, so removing one
+ * must leave the others where they are (§101). Bounded, so a long or looping chain ends.
+ */
+function isReply(item: mupdf.PDFObject): boolean {
+  const seen = new Set<number>([numOf(item)])
+  let at = item
+  for (let k = 0; k < 256; k++) {
+    let next: mupdf.PDFObject
+    try {
+      next = at.get('IRT')
+    } catch {
+      return false
+    }
+    if (!next.isDictionary()) return k > 0
+    const n = numOf(next)
+    if (n < 0 || seen.has(n)) return false
+    seen.add(n)
+    at = next
+  }
+  return false
+}
+
+/**
  * Takes annotations off a page (`page` is the page object), with what belongs to them, as
  * Acrobat does (A4): their pop-ups, and every reply (/IRT), replies to replies included, with
  * the replies' pop-ups. Returns the object numbers removed. Widgets are taken off the page
@@ -334,29 +359,43 @@ export function removeAnnotationObjects(page: mupdf.PDFObject, targets: Iterable
       return -1
     }
   }
+  /**
+   * Entries written as a dictionary of their own, with no object number: they are taken off by
+   * their place in the array, since nothing can point at them. A reply written that way used to
+   * be left behind, and its /IRT then kept the comment it answered — its text included — in the
+   * saved file, while the page looked clean (§102).
+   */
+  const doomed = new Set<number>()
+  /** Whether what the entry belongs to has gone: the comment it answers, or its pop-up's note. */
+  const belongsToGone = (item: mupdf.PDFObject): boolean => {
+    const subtype = item.get('Subtype')
+    const popup = subtype.isName() && subtype.asName() === 'Popup'
+    // (Only a pop-up's /Parent is an annotation.)
+    return (isReply(item) && gone.has(ref(item, 'IRT'))) || (popup && gone.has(ref(item, 'Parent')))
+  }
   for (let changed = true; changed; ) {
     changed = false
-    for (const item of items) {
+    for (const [i, item] of items.entries()) {
       const n = numOf(item)
-      if (n < 0) continue
-      if (gone.has(n)) {
+      if (n < 0) {
+        if (doomed.has(i) || !belongsToGone(item)) continue
+        doomed.add(i)
+        changed = true
+        const popup = ref(item, 'Popup')
+        if (popup > 0 && !gone.has(popup)) gone.add(popup)
+      } else if (gone.has(n)) {
         const popup = ref(item, 'Popup')
         if (popup > 0 && !gone.has(popup)) {
           gone.add(popup)
           changed = true
         }
-      } else {
-        const subtype = item.get('Subtype')
-        const popup = subtype.isName() && subtype.asName() === 'Popup'
-        // A reply to a removed one, or its pop-up. (Only a pop-up's /Parent is an annotation.)
-        if (gone.has(ref(item, 'IRT')) || (popup && gone.has(ref(item, 'Parent')))) {
-          gone.add(n)
-          changed = true
-        }
+      } else if (belongsToGone(item)) {
+        gone.add(n)
+        changed = true
       }
     }
   }
-  for (let i = annots.length - 1; i >= 0; i--) if (gone.has(numOf(annots.get(i)))) annots.delete(i)
+  for (let i = annots.length - 1; i >= 0; i--) if (doomed.has(i) || gone.has(numOf(annots.get(i)))) annots.delete(i)
   return gone
 }
 

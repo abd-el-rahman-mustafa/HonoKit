@@ -2,6 +2,7 @@ import * as mupdf from 'mupdf'
 import { PdfError } from './errors'
 import { repairLigatures } from './ligatures'
 import { authenticate } from './password'
+import { clearPasswordValues, hasPasswordValues } from './passwordfields'
 
 /**
  * The only file that imports MuPDF's document types into the rest of the engine.
@@ -145,6 +146,9 @@ export function isSigned(doc: PdfDoc): boolean {
 }
 
 export function saveBytes(doc: PdfDoc, options: string = SAVE_SNAPSHOT): Uint8Array {
+  // No file ever carries what someone typed into a password field (§99): every save goes through
+  // here, so this is where the values go. The document in memory is the one being written.
+  if (hasPasswordValues(doc)) clearPasswordValues(doc)
   // A signed file is only ever appended to (decisions §53): rewriting it — compressing, renumbering,
   // object streams — changes the signed bytes and every signature in it becomes invalid.
   const incremental = isSigned(doc) && doc.canBeSavedIncrementally()

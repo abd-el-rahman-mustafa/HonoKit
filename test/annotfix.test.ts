@@ -467,7 +467,9 @@ describe('text boxes made in other programs', () => {
 // --- forms -----------------------------------------------------------------------------------
 
 describe('form filling', () => {
-  it('draws a password field as bullets', async () => {
+  it('draws a password field as bullets of its saved value, never of what was typed', async () => {
+    // The file holds a password field's default value, never the typed one (§99), and the
+    // appearance is drawn from the saved value, so it does not say how long the password was.
     const pdf = await PDFDocument.create()
     const page = pdf.addPage([400, 400])
     const f = pdf.getForm().createTextField('pin')
@@ -479,8 +481,21 @@ describe('form filling', () => {
     // Page text leaves widgets out: read what the field's own appearance shows.
     const shown = widgetText(bytes)
     expect(shown).not.toContain('Secret')
-    expect(shown).toContain('•••••••••')
-    expect(ink(bytes, [44, 78, 236, 96])).toBeGreaterThan(20)
+    expect(shown).not.toContain('•')
+    // With a default value, that is what the bullets count.
+    const doc = openPdf(src)
+    let withDefault: Uint8Array
+    try {
+      const list = doc.getTrailer().get('Root').get('AcroForm').get('Fields')
+      for (let i = 0; i < list.length; i++) list.get(i).put('DV', doc.newString('abcde'))
+      withDefault = saveBytes(doc)
+    } finally {
+      free(doc)
+    }
+    const filled = await applyOperation(withDefault, { op: 'fillForm', values: [{ page: 0, index: w!.index, value: 'Secret123' }] })
+    expect(widgetText(filled.bytes)).toContain('•••••')
+    expect(widgetText(filled.bytes)).not.toContain('••••••')
+    expect(ink(filled.bytes, [44, 78, 236, 96])).toBeGreaterThan(20)
   })
 
   it('draws every widget of a field that appears twice', async () => {
