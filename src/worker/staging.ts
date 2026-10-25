@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { closeSync, fsyncSync, openSync, renameSync, rmSync, writeSync } from 'node:fs'
 import { open, rename, rm, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { applyAttributes, keptAttributes } from './winattrs'
 
 /**
  * Staging files, created exclusively (decisions §82). A file is written to a
@@ -33,7 +34,9 @@ const flushToDisk = (handle: FileHandle): Promise<void> => handle.sync()
 /**
  * Writes `data` to `target` through an exclusively created staging file beside it. The staging
  * file is flushed before the rename (§93), so the old file is only replaced by bytes the disk has
- * accepted; a failed flush leaves it as it was.
+ * accepted; a failed flush leaves it as it was. On Windows the staging file is marked with the
+ * attributes that keep the target out of a plain listing before anything is written into it, so a
+ * hidden or system file is not uncovered by a save (§104).
  */
 export async function writeStaged(
   target: string,
@@ -41,6 +44,7 @@ export async function writeStaged(
   suffixes: Iterator<string> = stagingSuffixes(),
   flush: (handle: FileHandle) => Promise<void> = flushToDisk,
 ): Promise<void> {
+  const kept = await keptAttributes(target)
   for (let i = 0; i < ATTEMPTS; i++) {
     const next = suffixes.next()
     if (next.done) break
@@ -54,6 +58,7 @@ export async function writeStaged(
     }
     try {
       try {
+        await applyAttributes(temporary, kept)
         await handle.writeFile(data)
         await flush(handle)
       } finally {

@@ -454,6 +454,23 @@ describe('a picture its frame crops moves with its frame, in its place in the dr
     expect(imageFilters(bytes)).toEqual(imageFilters(src)) // in place: no second copy of the picture
   })
 
+  it('under a clip it shares with other content, its own frame still grows with it', async () => {
+    // A report generator's shape: a section clip around text and pictures, each picture in its own
+    // frame inside it. No group holds every clip around the picture, so only the inner frame — the
+    // outermost group that draws nothing else — may move with it; the section's clip stays.
+    const src = await rawPicturePdf([`q 20 140 260 120 re W n 0 0.6 0 rg 20 140 260 10 re f ${FRAMED} Q`])
+    expect(rounded(pictures(src)[0]!.box)).toEqual(SHOWN)
+    const target: B = [40, 60, 120, 140]
+    const { bytes } = await applyOperation(src, { op: 'changePicture', page: 0, box: SHOWN, change: { kind: 'move', rect: target } })
+    // Its frame grew with it: the whole of the bigger box shows, not the old 40 × 40 of it.
+    expect(rounded(pictures(bytes)[0]!.box)).toEqual(target)
+    expect(bluish(pixel(bytes, 110, 130))).toBe(true)
+    // The section's own band, drawn in the shared group, is where it was.
+    expect(pixel(bytes, 250, 155)).toBe('0,153,0')
+    // Changed where it is drawn: one picture object, no second copy.
+    expect(imageFilters(bytes)).toEqual(imageFilters(src))
+  })
+
   it('a frame that also draws something else is not moved: the picture alone moves, drawn again', async () => {
     // A green square under the photo inside the frame's group: moving the group would carry it along.
     const src = await rawPicturePdf(['q 40 200 40 40 re W n 0 0.6 0 rg 40 200 10 10 re f q 80 0 0 40 40 200 cm /Im1 Do Q Q'])
