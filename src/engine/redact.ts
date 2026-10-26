@@ -603,7 +603,11 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
       const page = doc.loadPage(p) as mupdf.PDFPage
       try {
         // The removed text's /ActualText and /Alt go with it.
-        clearReplacementText(doc, p, () => page.applyRedactions(false, mupdf.PDFPage.REDACT_IMAGE_PIXELS, mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_COVERED, mupdf.PDFPage.REDACT_TEXT_REMOVE))
+        // A drawing goes when it touches a mark at all, not only when a mark covers it whole: a
+        // drawing that reaches past the mark's edge — an outlined word, a signature, a line of a
+        // chart — otherwise keeps every one of its drawing instructions in the file, under the
+        // painted box, for anyone to read back (§105).
+        clearReplacementText(doc, p, () => page.applyRedactions(false, mupdf.PDFPage.REDACT_IMAGE_PIXELS, mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_TOUCHED, mupdf.PDFPage.REDACT_TEXT_REMOVE))
       } finally {
         free(page)
       }
