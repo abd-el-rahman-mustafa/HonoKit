@@ -16,6 +16,7 @@ import { CONVERTIBLE, fileToPdf, officeApps, type Method } from './create'
 import { cleanShareFolder, copyFileToClipboard, emailWithAttachment, ensureShareFolder, mailApp, showShareSheet } from './share'
 import { runSmoke, smokeFolder } from './smoke'
 import { addPersonalWord, spellerFor } from './spell'
+import { mayInstallUpdate, type UnsavedState } from './installguard'
 import { Updater } from './updater'
 import { WorkerClient } from './worker-client'
 import { WrittenFiles } from './written'
@@ -735,6 +736,12 @@ const handlers: Record<string, (...args: unknown[]) => unknown> = {
   checkForUpdates: async () => (BRAND.online ? updater.check() : undefined),
   downloadUpdate: async () => (BRAND.online ? updater.download() : undefined),
   installUpdate: () => {
+    // Installing quits the app: unsaved work is not thrown away without a word (§106).
+    const ask = (prompt: UnsavedState['prompt']): boolean => {
+      const options = { type: 'warning' as const, title: prompt.title, message: prompt.message, buttons: [prompt.discard, prompt.cancel], defaultId: 1, cancelId: 1 }
+      return (window ? dialog.showMessageBoxSync(window, options) : dialog.showMessageBoxSync(options)) === 0
+    }
+    if (!mayInstallUpdate(unsaved, ask)) return
     allowClose = true
     updater.install()
   },
