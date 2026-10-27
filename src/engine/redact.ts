@@ -7,7 +7,7 @@ import { removeThreads } from './markup'
 import { free, isSigned, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
 import { drawLine, FontSet, measureLine, pageFrame, placeOverlay } from './stamp'
 import { extractLines } from './text'
-import { unlinkRemoved, xobjectsOf } from './redactresources'
+import { drawnResources, unlinkRemoved } from './redactresources'
 import { clearReplacementText } from './replacementtext'
 import { dropRemovedAnnotRefs } from './structtext'
 
@@ -591,7 +591,7 @@ export async function applyRedactions(bytes: Uint8Array, options: RedactOptions,
       )
     // Collected before the marks are applied and taken off the pages; their replies go after.
     const markObjects = redactionMarkObjects(doc, pages)
-    const drawn = xobjectsOf(doc, pages)
+    const drawn = drawnResources(doc, pages)
     for (const p of pages) {
       // MuPDF's rewrite of the page misreads T*, ' and " after a Td and can move text far from the
       // marks: every move is made explicit first (decisions §58).
