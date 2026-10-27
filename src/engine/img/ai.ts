@@ -46,10 +46,19 @@ export function useModelDirectory(dir: string | null): void {
   sessions.clear()
 }
 
+/**
+ * Whether `dir` holds **every** model. Choosing the folder on the face detector alone took one
+ * left half-written by an interrupted install, or an empty folder named by POWERPDF_RESOURCES over
+ * a complete `resources/ai` beside it, and the tool then failed inside onnxruntime with a
+ * missing-file error instead of saying the installation is incomplete. The four models ship
+ * together, so a folder missing one is not the models' folder.
+ */
+export const hasAiModels = (dir: string): boolean => Object.values(AI_MODELS).every((file) => existsSync(join(dir, file)))
+
 function modelDirectory(): string {
   if (directory) return directory
   const candidates = [process.env.POWERPDF_RESOURCES && join(process.env.POWERPDF_RESOURCES, 'ai'), resolve(process.cwd(), 'resources', 'ai')].filter(Boolean) as string[]
-  const found = candidates.find((d) => existsSync(join(d, AI_MODELS.faces)))
+  const found = candidates.find(hasAiModels)
   if (!found) throw new PdfError('unsupported', 'The image AI models are missing from this installation.')
   directory = found
   return found

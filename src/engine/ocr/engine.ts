@@ -29,7 +29,7 @@ export interface Reading {
   confidence: number
 }
 
-const MODELS = {
+export const OCR_MODELS = {
   detector: 'ch_PP-OCRv4_det_infer.onnx',
   latin: 'ch_PP-OCRv4_rec_infer.onnx',
   latinKeys: 'ppocr_keys_v1.txt',
@@ -44,10 +44,19 @@ export function setOcrDirectory(dir: string): void {
   directory = dir
 }
 
+/**
+ * Whether `dir` holds **every** model and dictionary. Choosing the folder on the detector alone
+ * took one left half-written by an interrupted install, or an empty folder named by
+ * POWERPDF_RESOURCES over a complete `resources/ocr` beside it, and reading a page then failed
+ * deep in the recogniser with a missing-file error instead of saying the installation is
+ * incomplete. The five files ship together, so a folder missing one is not the models' folder.
+ */
+export const hasOcrModels = (dir: string): boolean => Object.values(OCR_MODELS).every((file) => existsSync(join(dir, file)))
+
 function modelDirectory(): string {
   if (directory) return directory
   const candidates = [process.env.POWERPDF_RESOURCES && join(process.env.POWERPDF_RESOURCES, 'ocr'), resolve(process.cwd(), 'resources', 'ocr')].filter(Boolean) as string[]
-  const found = candidates.find((d) => existsSync(join(d, MODELS.detector)))
+  const found = candidates.find(hasOcrModels)
   if (!found) throw new Error('The text recognition models are missing from this installation.')
   directory = found
   return found
@@ -147,8 +156,8 @@ export async function openOcr(threads = 4): Promise<OcrEngine> {
     return sessions.get(file)!
   }
   const alphabets = {
-    latin: alphabetFrom(readFileSync(join(dir, MODELS.latinKeys), 'utf8')),
-    arabic: alphabetFrom(readFileSync(join(dir, MODELS.arabicKeys), 'utf8'))
+    latin: alphabetFrom(readFileSync(join(dir, OCR_MODELS.latinKeys), 'utf8')),
+    arabic: alphabetFrom(readFileSync(join(dir, OCR_MODELS.arabicKeys), 'utf8'))
   }
   const run = async (model: InferenceSession, data: Float32Array, dims: number[]): Promise<Tensor> => {
     const input = new ort.Tensor('float32', data, dims)
@@ -157,7 +166,7 @@ export async function openOcr(threads = 4): Promise<OcrEngine> {
   }
   return {
     async detectLines(image) {
-      const model = await session(MODELS.detector, false)
+      const model = await session(OCR_MODELS.detector, false)
       const found: TextBox[] = []
       for (let top = 0; top < image.height; top += DETECT_BAND - DETECT_OVERLAP) {
         const bandHeight = Math.min(DETECT_BAND, image.height - top)
@@ -178,7 +187,7 @@ export async function openOcr(threads = 4): Promise<OcrEngine> {
     },
     async read(line, recogniser) {
       const width = Math.max(16, Math.round(((line.width * LINE_HEIGHT) / line.height) * LINE_STRETCH))
-      const model = await session(recogniser === 'arabic' ? MODELS.arabic : MODELS.latin, true)
+      const model = await session(recogniser === 'arabic' ? OCR_MODELS.arabic : OCR_MODELS.latin, true)
       const out = await run(model, toPlanes(line, width, LINE_HEIGHT, width, LINE_HEIGHT, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]), [1, 3, LINE_HEIGHT, width])
       const [, steps, classes] = out.dims as number[]
       const decoded = decodeCtc(out.data as Float32Array, steps!, classes!, alphabets[recogniser])
