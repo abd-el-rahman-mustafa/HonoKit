@@ -2,6 +2,7 @@ import clsx from 'clsx'
 import { Check as CheckIcon, ChevronDown } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { placeBox } from './menuPlace'
 import { t } from '../store'
 import { pageUrl } from '@shared/ipc'
 import { exactPixels, stepScale, watchPixelRatio } from '@shared/pixels'
@@ -89,10 +90,8 @@ export function NumberInput({ value, onChange, min, max, step = 1, suffix }: { v
 
 /** Where a popover goes: under its button, flipped above near the window's foot, kept on screen. */
 export function place(anchor: DOMRect, width: number, height: number): React.CSSProperties {
-  const below = anchor.bottom + 4 + height < window.innerHeight - 8
-  const rtl = document.documentElement.dir === 'rtl'
-  const left = Math.min(Math.max(8, rtl ? anchor.right - width : anchor.left), window.innerWidth - width - 8)
-  return { position: 'fixed', left, top: below ? anchor.bottom + 4 : Math.max(8, anchor.top - 4 - height), width }
+  const view = { width: window.innerWidth, height: window.innerHeight }
+  return { position: 'fixed', ...placeBox(anchor, width, height, view, document.documentElement.dir === 'rtl') }
 }
 
 /** Closes a popover on a click elsewhere, Escape, scrolling or the window losing focus. */
@@ -150,6 +149,18 @@ export function Select<T extends string>({
   const list = useRef<HTMLDivElement>(null)
   useDismiss(open, () => setOpen(false), button, list)
   const current = options.find((o) => o.value === value)
+  /**
+   * How tall the list really is, read once it has been laid out. A choice is one line, or two
+   * when it carries a hint, or more when a long hint wraps, so the only honest answer is the
+   * measured one: the height decides whether the list fits under the control or has to flip
+   * above it, and a guess left a menu of two-line choices running off the foot of the window.
+   */
+  const [height, setHeight] = useState<number | null>(null)
+  const shape = JSON.stringify(options.map((o) => [o.label, o.hint ?? '']))
+  useLayoutEffect(() => {
+    if (!open) return setHeight(null)
+    if (list.current) setHeight(list.current.getBoundingClientRect().height)
+  }, [open, shape])
   const show = (): void => {
     setActive(Math.max(0, options.findIndex((o) => o.value === value)))
     setOpen(true)
@@ -202,7 +213,12 @@ export function Select<T extends string>({
             ref={list}
             role="listbox"
             className="z-[60] max-h-72 overflow-y-auto rounded-xl border border-line bg-surface p-1 text-ink shadow-xl"
-            style={place(rect, Math.max(rect.width, 160), Math.min(288, options.length * 34 + 10))}
+            // Laid out out of sight at its own height first, then placed by what it measures.
+            style={
+              height === null
+                ? { position: 'fixed', left: rect.left, top: 0, width: Math.max(rect.width, 160), visibility: 'hidden' }
+                : place(rect, Math.max(rect.width, 160), height)
+            }
             data-select-list=""
           >
             {options.map((o, i) => (

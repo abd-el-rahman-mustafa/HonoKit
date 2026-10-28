@@ -1231,7 +1231,35 @@ export async function runSmoke(window: BrowserWindow, openFiles: (paths: string[
       if (await click(labels.settings ?? 'Settings')) {
         await shot('11-settings')
         if (await clickIn('[data-settings] nav', labels.appearance ?? 'Appearance')) await shot('11b-settings-appearance')
-        if (await clickIn('[data-settings] nav', labels.saving ?? 'Saving')) await shot('11d-settings-saving')
+        if (await clickIn('[data-settings] nav', labels.saving ?? 'Saving')) {
+          await shot('11d-settings-saving')
+          // Where copies go: its choices name a folder and show its path underneath, so each row
+          // is two lines. The open menu must stay inside the window and must not cover the
+          // control it belongs to, whichever side it lands on.
+          const menu = await js<{ fits: boolean; clear: boolean; where: string } | null>(`(async () => {
+            const button = document.querySelector('[data-settings] [aria-haspopup=listbox]')
+            if (!button) return null
+            button.click()
+            await new Promise((r) => setTimeout(r, 300))
+            const list = document.querySelector('[data-select-list]')
+            if (!list) return null
+            const m = list.getBoundingClientRect()
+            const b = button.getBoundingClientRect()
+            return {
+              fits: m.top >= 0 && m.bottom <= window.innerHeight && m.left >= 0 && m.right <= window.innerWidth,
+              clear: m.bottom <= b.top + 1 || m.top >= b.bottom - 1,
+              where: 'menu ' + Math.round(m.top) + '–' + Math.round(m.bottom) + ', control ' + Math.round(b.top) + '–' + Math.round(b.bottom) + ', window ' + window.innerHeight
+            }
+          })()`)
+          if (!menu) errors.push('saving: the folder choices did not open')
+          else {
+            if (!menu.fits) errors.push(`saving: the folder choices are off the window (${menu.where})`)
+            if (!menu.clear) errors.push(`saving: the folder choices cover the control they belong to (${menu.where})`)
+            await shot('11d2-settings-folder-choices')
+            await js("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))")
+            await wait(200)
+          }
+        }
         if (await clickIn('[data-settings] nav', labels.places ?? 'Storage places')) {
           await wait(600)
           await shot('11e-settings-places')

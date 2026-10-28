@@ -25,7 +25,7 @@ export function Modal({ title, onClose, children, width = 420 }: { title: string
       <div role="dialog" aria-modal="true" aria-label={title} className="flex max-h-full flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl" style={{ width }}>
         <header className="flex items-center justify-between border-b border-line px-5 py-3">
           <h2 className="text-[15px] font-semibold">{title}</h2>
-          <button type="button" onClick={onClose} className="rounded p-1 text-muted hover:bg-surface-2 hover:text-ink">
+          <button type="button" aria-label={t('close')} title={t('close')} onClick={onClose} className="rounded p-1 text-muted hover:bg-surface-2 hover:text-ink">
             <X size={16} />
           </button>
         </header>

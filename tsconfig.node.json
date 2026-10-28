@@ -36,6 +36,7 @@
     "src/renderer/src/i18n.ts",
     "src/renderer/src/imageStrings.ts",
     "src/renderer/src/components/quickPlace.ts",
+    "src/renderer/src/components/menuPlace.ts",
     "test/**/*.ts"
   ]
 }
