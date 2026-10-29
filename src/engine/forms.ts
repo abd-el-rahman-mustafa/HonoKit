@@ -1,4 +1,5 @@
 import { PDFDocument, rgb } from 'pdf-lib'
+import { autoFieldSize } from '@shared/fieldText'
 import { detectDirection } from './bidi'
 import { PdfError } from './errors'
 import { free, isSigned, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
@@ -262,7 +263,7 @@ async function drawTextField(doc: PdfDoc, widget: mupdf.PDFObject, value: string
   const multiline = (fieldFlags(widget) & FF_MULTILINE) !== 0
   // A size the field cannot hold (some tools write one fitted to the empty box) counts as "fit".
   const fits = asked > 0 && (multiline ? asked * 2.4 <= height : asked <= height * 0.9)
-  let size = fits ? asked : multiline ? Math.min(11, height / 2.6) : Math.min(12, Math.max(6, height * 0.62))
+  let size = fits ? asked : autoFieldSize(height, multiline)
   const pad = 2 + (border ? borderWidth : 0)
   const q = widget.getInheritable('Q')
   const rtl = detectDirection(value) === 'rtl'

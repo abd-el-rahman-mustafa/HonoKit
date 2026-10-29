@@ -1,5 +1,6 @@
 import clsx from 'clsx'
 import { useEffect, useRef, useState } from 'react'
+import { autoFieldSize } from '@shared/fieldText'
 import type { FormFieldInfo } from '@shared/ipc'
 import { BadgeCheck, FileWarning, ScanText, ShieldAlert, X } from 'lucide-react'
 import { apply, openTool, typing, updateView, useT, type DocView } from '../store'
@@ -11,6 +12,9 @@ import { px } from './editGeometry'
  * are tinted blue and required ones outlined red. Each change is applied to the document
  * (undoable) and drawn by the engine, Arabic included (docs/decisions.md §47).
  */
+/** The largest text a live field asks the browser for, in screen pixels. */
+const MAX_SCREEN_FIELD_FONT = 256
+
 export function FormLayer({ view, page, scale }: { view: DocView; page: number; scale: number }) {
   const [fields, setFields] = useState<FormFieldInfo[]>([])
   const layer = useRef<HTMLDivElement>(null)
@@ -103,7 +107,10 @@ function Field({ docId, fieldKey, field: f, scale, highlight, onFill }: { docId:
       </select>
     )
   const height = f.box[3] - f.box[1]
-  const size = Math.max(8, Math.min(f.multiline ? 12 : height * 0.62, 14)) * scale
+  // The size the engine will draw the value at, so what is typed matches the saved page. The
+  // size on screen is capped after the zoom: a tall field at a high zoom must not ask the
+  // browser for a glyph hundreds of points tall.
+  const size = Math.min(autoFieldSize(height, f.multiline) * scale, MAX_SCREEN_FIELD_FONT)
   const commit = (): void => {
     setFocused(false)
     void commitTyped()
