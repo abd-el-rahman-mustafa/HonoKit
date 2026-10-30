@@ -115,6 +115,53 @@ describe('hostile page label trees', () => {
   }, 20000)
 })
 
+describe('a page that strays far out of its graphics state', () => {
+  /** A one-page PDF whose content closes the graphics-state stack `strays` times too often. */
+  async function strayingPage(strays: number): Promise<Uint8Array> {
+    const pdf = await PDFDocument.load(await makeLatinPdf(1))
+    const ctx = pdf.context
+    const extra = ctx.register(ctx.flateStream('Q\n'.repeat(strays)))
+    const page = pdf.getPage(0).node
+    page.set(PDFName.of('Contents'), ctx.obj([extra, ...page.normalizedEntries().Contents!.asArray()]))
+    return new Uint8Array(await pdf.save())
+  }
+
+  /** The bytes of the q/Q wrapper streams HonoKit puts around the page's own content. */
+  function wrappers(bytes: Uint8Array): string[] {
+    const doc = openPdf(bytes)
+    try {
+      const contents = doc.findPage(0).get('Contents')
+      const out: string[] = []
+      for (let i = 0; i < contents.length; i++) {
+        const s = contents.get(i)
+        if (s.get('HonoWrap').isName()) out.push(new TextDecoder('latin1').decode(s.readStream().asUint8Array()))
+      }
+      return out
+    } finally {
+      free(doc)
+    }
+  }
+
+  const op = WatermarkOp.parse({ op: 'watermark', text: 'DRAFT', rotation: 45, opacity: 0.3, size: 48, position: 'center' })
+
+  it('keeps the wrapper bounded, however often the page strays', async () => {
+    const src = await strayingPage(200_000)
+    const started = Date.now()
+    const { bytes } = await addWatermark(src, op)
+    expect(Date.now() - started).toBeLessThan(20000)
+    // Unbounded, the wrapper would grow to the stream's own size: 200,001 q and as many Q again.
+    for (const w of wrappers(bytes)) expect(w.length).toBeLessThan(8000)
+  }, 60000)
+
+  it('still balances an ordinary stray Q exactly', async () => {
+    const { bytes } = await addWatermark(await strayingPage(3), op)
+    const [open, close] = wrappers(bytes)
+    // Three stray Q: four q in front absorb them, and one Q closes what is left open.
+    expect((open!.match(/q/g) ?? []).length).toBe(4)
+    expect((close!.match(/Q/g) ?? []).length).toBe(1)
+  }, 30000)
+})
+
 describe('Word export', () => {
   it('writes a table wider than Word allows (63 columns) as text', async () => {
     const run = (text: string): ParagraphBlock => ({

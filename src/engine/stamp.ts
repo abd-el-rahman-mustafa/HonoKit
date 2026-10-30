@@ -246,6 +246,13 @@ const encoder = new TextEncoder()
 /** The tag in the dictionary of our q/Q wrapper streams: /HonoWrap /Open or /Close. */
 const WRAP = 'HonoWrap'
 
+/**
+ * How many q (or Q) the wrapper will write. PDF 32000 Annex C puts the graphics-state stack at 28,
+ * so a page that needs more than this is already past what any reader honours, and the balance
+ * cannot be restored for it anyway; every real file stays exact.
+ */
+const MAX_WRAP = 1024
+
 function wrapTag(stream: mupdf.PDFObject): string | null {
   const tag = stream.get(WRAP)
   return tag.isName() ? tag.asName() : null
@@ -296,8 +303,12 @@ function wrapContents(doc: PdfDoc, page: mupdf.PDFObject): mupdf.PDFObject[] {
   opening.put(WRAP, doc.newName('Open'))
   const closing = doc.newDictionary()
   closing.put(WRAP, doc.newName('Close'))
-  const before = doc.addStream(encoder.encode('q\n'.repeat(1 - low)), opening)
-  const after = doc.addStream(encoder.encode('\n' + 'Q\n'.repeat(1 - low + end)), closing)
+  // Both counts come from the page's own operators, so a damaged or hostile stream of nothing but
+  // q or Q would otherwise make a wrapper as large as itself (and store it in the saved file).
+  const lead = Math.min(1 - low, MAX_WRAP)
+  const trail = Math.max(1, Math.min(lead + end, MAX_WRAP))
+  const before = doc.addStream(encoder.encode('q\n'.repeat(lead)), opening)
+  const after = doc.addStream(encoder.encode('\n' + 'Q\n'.repeat(trail)), closing)
   return [before, ...list, after]
 }
 
