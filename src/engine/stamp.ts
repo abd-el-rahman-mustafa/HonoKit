@@ -8,6 +8,7 @@ import { free, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
 import { NATIVE_PREFIX } from './nativefont'
 import { tokens } from './contentfix'
 import { rotationOf } from './pages'
+import { hardLines } from './rows'
 
 /**
  * Drawing text and images onto existing pages: watermarks and page numbers.
@@ -410,7 +411,7 @@ export async function addWatermark(bytes: Uint8Array, op: WatermarkOp, imageByte
       })
     } else {
       fonts ??= new FontSet(overlay)
-      const lines = op.text!.split(/\r?\n/).filter((l) => l.length > 0)
+      const lines = hardLines(op.text!).filter((l) => l.length > 0)
       // Too long for the page at this size and angle: shrink every line by the same factor.
       let size = op.size
       const widest = Math.max(0, ...(await Promise.all(lines.map((l) => measureLine(fonts!, l, size, op.bold)))).map((m) => m.width))

@@ -4,6 +4,7 @@ import { detectDirection } from './bidi'
 import { PdfError } from './errors'
 import { free, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
 import { contentOf, FontSet, measureLine, drawLine } from './stamp'
+import { hardLines } from './rows'
 import { isIdentity, uprightMatrix } from './upright'
 
 /**
@@ -35,7 +36,7 @@ const hexOf = (c: Rgb): string => `#${c.map((v) => Math.round(v * 255).toString(
 /** Word-wraps `text` to `width` points; explicit line breaks are kept. */
 async function wrap(fonts: FontSet, text: string, size: number, width: number): Promise<string[]> {
   const out: string[] = []
-  for (const paragraph of text.split(/\r?\n/)) {
+  for (const paragraph of hardLines(text)) {
     const words = paragraph.split(/\s+/).filter(Boolean)
     if (words.length === 0) {
       out.push('')

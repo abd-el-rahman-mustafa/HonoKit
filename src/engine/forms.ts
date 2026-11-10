@@ -6,6 +6,7 @@ import { free, isSigned, mupdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
 import { defaultFieldText } from './passwordfields'
 import { contentOf, drawLine, FontSet, measureLine } from './stamp'
 import { extractLines } from './text'
+import { hardLines } from './rows'
 import { isIdentity, shownTurn, turnMatrix } from './upright'
 
 /**
@@ -270,7 +271,7 @@ async function drawTextField(doc: PdfDoc, widget: mupdf.PDFObject, value: string
   const align = q.isNumber() ? [0, 0.5, 1][q.asNumber()] ?? 0 : rtl ? 1 : 0
   const lines: string[] = []
   if (multiline) {
-    for (const paragraph of value.split(/\r?\n/)) {
+    for (const paragraph of hardLines(value)) {
       let line = ''
       for (const word of paragraph.split(/\s+/).filter(Boolean)) {
         const next = line ? `${line} ${word}` : word

@@ -13,6 +13,7 @@ import { safeRedact } from './saferedact'
 import { covers, NATIVE_PREFIX, nativeFont, nativeTJ, nativeWidth, type NativeFont } from './nativefont'
 import { embeddedFont, installedFamily, isStandardFamily } from './docfonts'
 import { unreadable } from './text'
+import { hardLines } from './rows'
 import { carryStyles, isMarker, mark, paletteOf, plainText, segments, spansOf, unmark, type RunStyle, type StyledSpan } from './richtext'
 
 /**
@@ -530,7 +531,7 @@ async function layout(ts: Setter, p: Paragraph, text: string, pageWidth: number,
   const far = growToMargin ? (rtl ? Math.min(p.farEdge, 36) : Math.max(p.farEdge, pageWidth - 36)) : p.farEdge
   const placed: Placed[] = []
   let y = p.lines[0]!.baseline
-  for (const hard of text.split(/\r?\n/)) {
+  for (const hard of hardLines(text)) {
     let body = hard.trim()
     let marker: Placed['marker']
     let first = placed.length === 0
