@@ -6,6 +6,7 @@ import { ImageToolView } from './components/ImageToolView'
 import { PhotoEditor } from './components/PhotoEditor'
 import { READABLE_EXTENSIONS } from '@shared/imageFormats'
 import { fileKind } from '@shared/opening'
+import { modalIsOpen } from '@shared/pagekeys'
 import { ScanView, SCAN_TOOLS, type ScanGoal } from './components/ScanView'
 import { ContextMenu, menuIsOpen } from './components/ContextMenu'
 import { Home } from './components/Home'
@@ -44,7 +45,7 @@ function useShortcuts(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const s = useStore.getState()
-      if (s.dialog || s.busy) return
+      if (s.dialog || s.busy || modalIsOpen()) return
       const view = activeView()
       const mod = e.ctrlKey || e.metaKey
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement

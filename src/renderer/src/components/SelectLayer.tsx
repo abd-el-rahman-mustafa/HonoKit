@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { PageLink } from '@shared/ipc'
 import { apply, copyDocumentText, goToDestination, openTool, openWebLink, updateView, useT, type DocView } from '../store'
 import { openMenu } from './ContextMenu'
-import { px } from './editGeometry'
+import { pageKeysBusy, px } from './editGeometry'
 import { pageEntries } from './menus'
 import { MiniButton } from './PictureEdit'
 
@@ -82,7 +82,7 @@ export function SelectLayer({ view, page, scale }: { view: DocView; page: number
   useEffect(() => {
     if (!selection) return
     const key = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') updateView(info.id, { selection: null })
+      if (e.key === 'Escape' && !pageKeysBusy()) updateView(info.id, { selection: null })
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)

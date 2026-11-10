@@ -3,7 +3,7 @@ import { Check, ImageUp, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { PictureInfo } from '@shared/ipc'
 import { apply, updateView, useT, type DocView, type Placing } from '../store'
-import { follow, keepOnPage, px, snap, typing, type Box, type Guide } from './editGeometry'
+import { follow, keepOnPage, pageKeysBusy, px, snap, type Box, type Guide } from './editGeometry'
 
 /**
  * Pictures in Edit mode, as in Acrobat's "Edit text & images": every picture has an outline;
@@ -107,7 +107,7 @@ export function SelectedPicture({
   // Delete removes the selected picture; Esc lets go of it, as in every editor.
   useEffect(() => {
     const key = (e: KeyboardEvent): void => {
-      if (typing()) return
+      if (pageKeysBusy()) return
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         remove()

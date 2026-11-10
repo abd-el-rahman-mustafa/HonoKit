@@ -1,6 +1,7 @@
 /** Geometry shared by the Edit mode layers. Page points, top-left origin. The pure parts live in @shared/viewGeometry. */
 
 import type { Box } from '@shared/viewGeometry'
+import { keysLeavePageAlone } from '@shared/pagekeys'
 
 export { anchoredScroll, dragMove, keepOnPage, pageSpots, scrollToBox, snap, zoomAnchor, type Box, type Guide, type PageSpot, type ZoomAnchor } from '@shared/viewGeometry'
 
@@ -15,11 +16,11 @@ export const inside = (b: Box, p: { x: number; y: number }, margin = 0): boolean
 
 export const area = (b: Box): number => (b[2] - b[0]) * (b[3] - b[1])
 
-/** True while typing in a field, when keys like Delete belong to the field. */
-export function typing(): boolean {
-  const el = document.activeElement
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
-}
+/**
+ * True when the page's own keys (Delete, Esc) must wait: a field being typed in has them, and so
+ * does an open dialog or menu, even with its focus on a button.
+ */
+export const pageKeysBusy = (): boolean => keysLeavePageAlone()
 
 /**
  * Follows a press on the page until release: `onMove` gets the distance in points once the

@@ -5,7 +5,7 @@ import type { MarkupInfo, TextLineInfo } from '@shared/ipc'
 import type { OpInput } from '@shared/ops'
 import { smoothStroke } from '@shared/smooth'
 import { apply, updateView, useStore, useT, type DocView } from '../store'
-import { area, dragMove, follow, inside, px, typing, type Box, type Guide } from './editGeometry'
+import { area, dragMove, follow, inside, pageKeysBusy, px, type Box, type Guide } from './editGeometry'
 import { MiniButton } from './PictureEdit'
 
 /**
@@ -120,7 +120,7 @@ export function MarkupLayer({ view, page, scale, visible }: { view: DocView; pag
   useEffect(() => {
     if (!selected || draft) return
     const key = (e: KeyboardEvent): void => {
-      if (typing()) return
+      if (pageKeysBusy()) return
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         remove(selected)
