@@ -1,5 +1,5 @@
 import { PdfError } from './errors'
-import { free, mupdf, newPdf, openPdf, saveBytes, type PdfDoc } from './mupdf'
+import { free, mupdf, newPdf, openPdf, rightsOf, saveBytes, type PdfDoc } from './mupdf'
 import { carryPrintStandard, readPrintStandard, withdrawClaims, type PrintStandard } from './pdfx'
 
 /**
@@ -608,6 +608,20 @@ export function blankPdf(width: number, height: number, count: number): Uint8Arr
   }
 }
 
+/**
+ * Pages that leave a file for another one (Combine, Insert from file, Replace pages) take its text
+ * and pictures into a document that does not carry its protection. That is copying and assembling
+ * both, so the author must allow both, as Acrobat's "Page extraction" (decisions §116); the
+ * permissions password lifts it, as everything else. Extract and Split keep the file's own
+ * protection and are not limited by this.
+ */
+export function assertCanTakePages(donor: PdfDoc): void {
+  const r = rightsOf(donor)
+  if (!(r.copy && (r.assemble || r.edit))) {
+    throw Object.assign(new PdfError('restricted', "The author of this PDF does not allow taking its pages into another document. Enter the file's permissions password to use its pages."), { key: 'error.noPageExtraction' })
+  }
+}
+
 /** Inserts pages of another PDF (all of them when `pages` is omitted) at position `at`. */
 export function insertPdfPages(bytes: Uint8Array, at: number, other: Uint8Array, pages?: number[], otherPassword?: string, password?: string): Uint8Array {
   const doc = openPdf(bytes, password)
@@ -615,6 +629,7 @@ export function insertPdfPages(bytes: Uint8Array, at: number, other: Uint8Array,
   try {
     const total = doc.countPages()
     if (at < 0 || at > total) throw new PdfError('bad-arguments', `Cannot insert at page ${at + 1}.`)
+    assertCanTakePages(donor)
     const list = pages ?? Array.from({ length: donor.countPages() }, (_, i) => i)
     assertPages(donor, list)
     importPages(doc, donor, list, at)
@@ -895,6 +910,7 @@ export function replacePages(bytes: Uint8Array, targets: number[], other: Uint8A
   const doc = openPdf(bytes, password)
   const donor = openPdf(other, otherPassword)
   try {
+    assertCanTakePages(donor)
     assertPages(doc, targets)
     assertPages(donor, from)
     const map = doc.newGraftMap()
@@ -933,6 +949,7 @@ export function mergePdfs(inputs: Array<{ bytes: Uint8Array; password?: string }
       for (const [i, input] of inputs.entries()) {
         const src = openPdf(input.bytes, input.password)
         try {
+          assertCanTakePages(src)
           importPages(out, src, Array.from({ length: src.countPages() }, (_, p) => p), out.countPages())
           if (i === 0) copyMetadata(src, out)
           standards.push(readPrintStandard(src))
