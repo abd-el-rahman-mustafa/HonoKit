@@ -6,7 +6,7 @@ import mark from '../../../../build/icon.svg'
 import markSmall from '../../../../build/icon-small.svg'
 import type { Place } from '@shared/ipc'
 import { fileKind } from '@shared/opening'
-import { recentOfKind, type RecentKind } from '@shared/recent'
+import { recentOfKind, recentRowActions, type RecentKind } from '@shared/recent'
 import { formatBytes } from '../i18n'
 import { changeSettings, newDocument, openAny, openAnyWithPicker, openPictureWithPicker, openTool, openWithPicker, setDialog, setHomeSection, STANDALONE_TOOLS, useStore, useT, type ToolId } from '../store'
 import { Select } from './ui'
@@ -222,7 +222,7 @@ function RecentTable() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-line bg-surface" role="tabpanel" id="recent-panel" aria-labelledby={`recent-tab-${tab}`}>
-          <div className="grid grid-cols-[1fr_120px_170px_36px] items-center gap-3 border-b border-line px-4 py-2 text-[11px] font-semibold tracking-wider text-muted uppercase" role="row">
+          <div className="grid grid-cols-[1fr_120px_170px_64px] items-center gap-3 border-b border-line px-4 py-2 text-[11px] font-semibold tracking-wider text-muted uppercase" role="row">
             <span>{t('name')}</span>
             <span>{t('fileSize')}</span>
             <span>{t('modified')}</span>
@@ -231,8 +231,9 @@ function RecentTable() {
           {shown.map((path) => {
             const row = info[path]
             const missing = row && row.size === null
+            const actions = recentRowActions(row)
             return (
-              <div key={path} className="group grid grid-cols-[1fr_120px_170px_36px] items-center gap-3 border-b border-line px-4 last:border-b-0 hover:bg-surface-2" role="row">
+              <div key={path} className="group grid grid-cols-[1fr_120px_170px_64px] items-center gap-3 border-b border-line px-4 last:border-b-0 hover:bg-surface-2" role="row">
                 <button
                   type="button"
                   onClick={() => void openAny([path])}
@@ -252,15 +253,29 @@ function RecentTable() {
                 </button>
                 <span className="text-[12px] text-muted tabular-nums">{row?.size != null ? formatBytes(language, row.size) : '—'}</span>
                 <span className="text-[12px] text-muted">{row?.modified != null ? date(row.modified) : '—'}</span>
-                <button
-                  type="button"
-                  title={t('remove')}
-                  aria-label={t('remove')}
-                  className="rounded p-1.5 text-faint opacity-0 group-hover:opacity-100 hover:bg-surface hover:text-ink focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-focus"
-                  onClick={async () => useStore.setState({ settings: await window.api.forgetRecent(path) })}
-                >
-                  <X size={14} />
-                </button>
+                <span className="flex items-center justify-end gap-0.5">
+                  {actions.includes('folder') && (
+                    <button
+                      type="button"
+                      title={t('showInFolder')}
+                      aria-label={t('showInFolder')}
+                      className="rounded p-1.5 text-faint opacity-0 group-hover:opacity-100 hover:bg-surface hover:text-ink focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-focus"
+                      onClick={() => void window.api.showInFolder(path)}
+                      data-recent-folder=""
+                    >
+                      <FolderOpen size={14} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    title={t('remove')}
+                    aria-label={t('remove')}
+                    className="rounded p-1.5 text-faint opacity-0 group-hover:opacity-100 hover:bg-surface hover:text-ink focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-focus"
+                    onClick={async () => useStore.setState({ settings: await window.api.forgetRecent(path) })}
+                  >
+                    <X size={14} />
+                  </button>
+                </span>
               </div>
             )
           })}

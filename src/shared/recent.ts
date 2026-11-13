@@ -26,6 +26,16 @@ export function withRecent(list: readonly string[], path: string, max = RECENT_P
   return [path, ...list.filter((p) => p !== path)].filter((p) => ++counts[recentKind(p)] <= max)
 }
 
+export type RecentRowAction = 'folder' | 'remove'
+
+/**
+ * What a row of Recent offers beside opening: its folder, and leaving the list. A file that is
+ * gone (its size read as null) has no place to show, so it can only be removed.
+ */
+export function recentRowActions(info: { size: number | null } | undefined): RecentRowAction[] {
+  return info && info.size === null ? ['remove'] : ['folder', 'remove']
+}
+
 /** The list without one file, without one kind (Clear on a tab), or empty. */
 export function withoutRecent(list: readonly string[], forget: { path?: string; kind?: RecentKind }): string[] {
   if (forget.path) return list.filter((p) => p !== forget.path)
