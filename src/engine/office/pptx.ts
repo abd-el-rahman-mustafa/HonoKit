@@ -3,9 +3,9 @@ import PptxGenJS from 'pptxgenjs'
 import { BRAND } from '@shared/brand'
 import { directedRuns, type DirectedRun } from './bidiruns'
 import { EMU, hex, shapeParts, solid, svgExtension } from './drawingml'
-import { joinedRuns, textBoxes, type TextBox } from './fit'
-import { fontsFor } from './fonts'
-import type { Box, DocModel, PageModel, ParagraphBlock, PictureBlock, ShapeBlock, TableBlock, TableCell } from './model'
+import { joinedRuns, linkTrimmed, textBoxes, type TextBox } from './fit'
+import { descentShare, drawnFamilies, fontsFor } from './fonts'
+import type { Box, DocModel, LineBlock, PageModel, ParagraphBlock, PictureBlock, ShapeBlock, TableBlock, TableCell } from './model'
 import type { Rule } from './scene'
 
 /**
@@ -34,22 +34,51 @@ const esc = (s: string): string => s.replace(CONTROL, '').replace(/&/g, '&amp;')
  * Line spacing as PowerPoint draws it (measured on its PDF export, Arial, Georgia, Calibri, Times New
  * Roman, Segoe UI, Courier New, Tahoma, Simplified Arabic and Dubai at 10 and 20 pt): a percentage
  * of 1.2 times the size, whatever the font, kept to a thousandth; spacing in points is rounded to
- * whole points (11.5 came out 12, a paragraph of 10 lines 5 points too long). The first baseline
- * lies 0.26 of the size above the line's bottom up to 100 %, and at 0.751 of the line above that.
+ * whole points (11.5 came out 12, a paragraph of 10 lines 5 points too long).
  */
 const percentOf = (pitch: number, size: number): number => pitch / (1.2 * size)
-const baselineIn = (pitch: number, size: number): number => (percentOf(pitch, size) <= 1 ? pitch - size * 0.26 : pitch * 0.751)
+/** The spacing as written: a share of 1.2 × size, in thousandths of a percent. */
+const percentWritten = (pitch: number, size: number): number => Math.max(10000, Math.round(percentOf(pitch, size) * 100000))
+
+/** A quarter of the line (PowerPoint keeps 0.249 below the baseline when the spacing is above 100 %). */
+const QUARTER = 0.249
+
+/**
+ * How far below the baseline PowerPoint keeps a line (points), measured on its PDF export (research
+ * §10; nine Latin and five Arabic fonts, 80–160 %): at 100 % the font's own descent (`descent`,
+ * fonts.ts descentShare × size); tighter, the space comes off the top, but a font deeper than a
+ * quarter of the line loses a quarter of the cut below too; wider, a quarter of the line, or the
+ * font's descent when that is deeper — and a font deeper than a quarter of 1.2 × size adds the excess.
+ */
+function belowBaseline(pitch: number, size: number, descent: number): number {
+  const pct = percentWritten(pitch, size) / 100000
+  const quarter = QUARTER * pct * 1.2 * size
+  const over = Math.max(0, descent - QUARTER * 1.2 * size)
+  if (pct <= 1) return descent > quarter ? quarter + over : descent
+  return descent > quarter ? descent : quarter + over
+}
+
+/** Where PowerPoint puts a line's baseline below the line's top (points). */
+const baselineIn = (pitch: number, size: number, descent: number): number => (percentWritten(pitch, size) / 100000) * 1.2 * size - belowBaseline(pitch, size, descent)
+
+/** A line's descent at 100 % (points): the deepest of the fonts its letters are drawn in. */
+function descentOf(line: LineBlock): number {
+  let deepest = 0
+  for (const r of line.runs) for (const family of drawnFamilies(r)) deepest = Math.max(deepest, descentShare(family, r.bold, r.italic) * r.size)
+  return deepest || descentShare('', false, false) * Math.max(1, ...line.runs.map((r) => r.size))
+}
 
 interface Media {
   name: string
   bytes: Uint8Array
 }
 
-/** One slide being written: its shapes' XML, ids, pictures and their relationships. */
+/** One slide being written: its shapes' XML, ids, pictures and links, and their relationships. */
 class SlideXml {
   private next = 2
   readonly parts: string[] = []
-  readonly rels: Array<{ id: string; target: string }> = []
+  readonly rels: Array<{ id: string; target: string; link?: boolean }> = []
+  private readonly links = new Map<string, string>()
   constructor(
     private readonly media: Media[],
     /** Page points → slide EMU. */
@@ -81,7 +110,24 @@ class SlideXml {
     this.rels.push({ id, target: `../media/${name}` })
     return id
   }
+  /** A web or mail address this slide links to; its relationship id (one per address). */
+  link(uri: string): string {
+    let id = this.links.get(uri)
+    if (!id) {
+      id = `rIdHkL${this.links.size + 1}`
+      this.links.set(uri, id)
+      this.rels.push({ id, target: uri, link: true })
+    }
+    return id
+  }
 }
+
+/**
+ * A run's link: clicking it opens the address. PowerPoint draws linked text in the theme's link
+ * colour unless told to keep the text's own (Office 2019's hlinkClr extension).
+ */
+const linkXml = (sx: SlideXml, uri: string): string =>
+  `<a:hlinkClick r:id="${sx.link(uri)}"><a:extLst><a:ext uri="{A12FA001-AC4F-418D-AE19-62706E023703}"><ahyp:hlinkClr xmlns:ahyp="http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor" val="tx"/></a:ext></a:extLst></a:hlinkClick>`
 
 function xfrm(sx: SlideXml, box: Box, flip = ''): string {
   return `<a:xfrm${flip}><a:off x="${sx.x(box[0])}" y="${sx.y(box[1])}"/><a:ext cx="${sx.len(box[2] - box[0])}" cy="${sx.len(box[3] - box[1])}"/></a:xfrm>`
@@ -102,14 +148,24 @@ function pictureXml(sx: SlideXml, b: PictureBlock): string {
 }
 
 function runXml(sx: SlideXml, r: DirectedRun, spacing: number): string {
+  const pieces = linkTrimmed(r)
+  if (pieces.length > 1) return pieces.map((p) => runXml(sx, p, spacing)).join('')
   const f = fontsFor(r)
   const sz = Math.max(100, Math.min(400000, Math.round(r.size * sx.scale * 100)))
   const spc = Math.round(spacing * sx.scale * 100)
   // No kerning: the widths were fitted without it (fit.ts).
-  return `<a:r><a:rPr lang="${r.rtl ? 'ar-AE' : 'en-US'}" sz="${sz}" b="${r.bold ? 1 : 0}" i="${r.italic ? 1 : 0}" kern="0"${spc ? ` spc="${spc}"` : ''} dirty="0"><a:solidFill><a:srgbClr val="${hex(r.colour)}"/></a:solidFill><a:latin typeface="${esc(f.latin)}"/><a:cs typeface="${esc(f.arabic)}"/></a:rPr><a:t>${esc(r.text)}</a:t></a:r>`
+  return `<a:r><a:rPr lang="${r.rtl ? 'ar-AE' : 'en-US'}" sz="${sz}" b="${r.bold ? 1 : 0}" i="${r.italic ? 1 : 0}" kern="0"${spc ? ` spc="${spc}"` : ''} dirty="0"><a:solidFill><a:srgbClr val="${hex(r.colour)}"/></a:solidFill><a:latin typeface="${esc(f.latin)}"/><a:cs typeface="${esc(f.arabic)}"/>${r.link ? linkXml(sx, r.link) : ''}</a:rPr><a:t>${esc(r.text)}</a:t></a:r>`
 }
 
-const breakXml = (sx: SlideXml, r: DirectedRun | undefined): string => `<a:br><a:rPr lang="en-US" sz="${Math.max(100, Math.round((r?.size ?? 10) * sx.scale * 100))}" dirty="0"/></a:br>`
+/**
+ * A line break, in the fonts and size of the run it ends: a break left in the theme's font made its
+ * line as deep as that font (a Segoe UI line's baseline moved by 0.03 of the size).
+ */
+function breakXml(sx: SlideXml, r: DirectedRun | undefined): string {
+  const f = r ? fontsFor(r) : null
+  const fonts = f ? `<a:latin typeface="${esc(f.latin)}"/><a:cs typeface="${esc(f.arabic)}"/>` : ''
+  return `<a:br><a:rPr lang="${r?.rtl ? 'ar-AE' : 'en-US'}" sz="${Math.max(100, Math.min(400000, Math.round((r?.size ?? 10) * sx.scale * 100)))}" dirty="0">${fonts}</a:rPr></a:br>`
+}
 
 /** Where a text box lies inside a table cell: room left between it and the cell's left and right edges (points). */
 interface Inset {
@@ -131,23 +187,27 @@ function paragraphXml(sx: SlideXml, b: ParagraphBlock, tb: TextBox, inset: Inset
   const marR = sx.len(end)
   const indent = sx.len(first) - sx.len(hang)
   const margin = `${marL ? ` marL="${marL}"` : ''}${marR ? ` marR="${marR}"` : ''}${indent ? ` indent="${indent}"` : ''}`
-  const pPr = `<a:pPr algn="${algn}"${b.rtl ? ' rtl="1"' : ' rtl="0"'}${margin}><a:lnSpc><a:spcPct val="${Math.max(10000, Math.round(percentOf(tb.pitch, tb.size) * 100000))}"/></a:lnSpc><a:spcBef><a:spcPts val="${Math.max(0, Math.round(before * sx.scale * 100))}"/></a:spcBef><a:spcAft><a:spcPts val="0"/></a:spcAft><a:buNone/></a:pPr>`
+  const pPr = `<a:pPr algn="${algn}"${b.rtl ? ' rtl="1"' : ' rtl="0"'}${margin}><a:lnSpc><a:spcPct val="${percentWritten(tb.pitch, tb.size)}"/></a:lnSpc><a:spcBef><a:spcPts val="${Math.max(0, Math.round(before * sx.scale * 100))}"/></a:spcBef><a:spcAft><a:spcPts val="0"/></a:spcAft><a:buNone/></a:pPr>`
   let runs: string
   if (tb.wrap) runs = directedRuns(joinedRuns(tb.lines), b.rtl).map((r) => runXml(sx, r, tb.spacing[0] ?? 0)).join('')
-  else
-    runs = tb.lines
-      .map((l, i) => {
-        const pieces = directedRuns(l.runs, b.rtl)
-        return (i > 0 ? breakXml(sx, pieces[0]) : '') + pieces.map((r) => runXml(sx, r, tb.spacing[i] ?? 0)).join('')
-      })
-      .join('')
+  else {
+    runs = ''
+    let previous: DirectedRun | undefined
+    tb.lines.forEach((l, i) => {
+      const pieces = directedRuns(l.runs, b.rtl)
+      // The break belongs to the line it ends (its last run in logical order).
+      if (i > 0) runs += breakXml(sx, previous ?? pieces[0])
+      runs += pieces.map((r) => runXml(sx, r, tb.spacing[i] ?? 0)).join('')
+      previous = pieces[pieces.length - 1] ?? previous
+    })
+  }
   return `<a:p>${pPr}${runs}</a:p>`
 }
 
 function textBoxXml(sx: SlideXml, b: ParagraphBlock, tb: TextBox): string {
   const id = sx.id()
   const first = tb.lines[0]!
-  const top = first.baseline - baselineIn(tb.pitch, tb.size)
+  const top = first.baseline - baselineIn(tb.pitch, tb.size, descentOf(first))
   const height = tb.pitch * tb.lines.length
   const box: Box = [tb.left, top, tb.left + tb.width, top + height]
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>${xfrm(sx, box)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="${tb.wrap ? 'square' : 'none'}" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/>${paragraphXml(sx, b, tb)}</p:txBody></p:sp>`
@@ -181,16 +241,17 @@ function cellXml(sx: SlideXml, cell: TableCell, extra: string): string {
   items.sort((a, b) => a.tb.lines[0]!.baseline - b.tb.lines[0]!.baseline)
   let body = ''
   let top = 0
-  let last: { baseline: number; pitch: number; size: number } | null = null
+  // The bottom of the cell's text so far: the last line's baseline and what lies below it.
+  let bottom: number | null = null
   for (const { p, tb } of items) {
     const inset = { left: Math.max(0, tb.left - box[0]), right: Math.max(0, box[2] - (tb.left + tb.width)) }
-    const lineTop = tb.lines[0]!.baseline - baselineIn(tb.pitch, tb.size)
+    const lineTop = tb.lines[0]!.baseline - baselineIn(tb.pitch, tb.size, descentOf(tb.lines[0]!))
     let before = 0
-    if (!last) top = Math.max(0, lineTop - box[1])
-    else before = Math.max(0, lineTop - (last.baseline + (last.pitch - baselineIn(last.pitch, last.size))))
+    if (bottom === null) top = Math.max(0, lineTop - box[1])
+    else before = Math.max(0, lineTop - bottom)
     body += paragraphXml(sx, p, tb, inset, before)
     const lastLine = tb.lines[tb.lines.length - 1]!
-    last = { baseline: lastLine.baseline, pitch: tb.pitch, size: tb.size }
+    bottom = lastLine.baseline + belowBaseline(tb.pitch, tb.size, descentOf(lastLine))
   }
   // An empty cell takes the least height: a tiny empty paragraph.
   if (!body) body = '<a:p><a:pPr><a:lnSpc><a:spcPts val="100"/></a:lnSpc></a:pPr><a:endParaRPr lang="en-US" sz="100" dirty="0"/></a:p>'
@@ -275,7 +336,13 @@ export async function writePptx(model: DocModel): Promise<Uint8Array> {
     if (sx.rels.length) {
       const relsName = `ppt/slides/_rels/slide${i + 1}.xml.rels`
       const rels = await zip.file(relsName)!.async('string')
-      const extra = sx.rels.map((r) => `<Relationship Id="${r.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${r.target}"/>`).join('')
+      const extra = sx.rels
+        .map((r) =>
+          r.link
+            ? `<Relationship Id="${r.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${esc(r.target)}" TargetMode="External"/>`
+            : `<Relationship Id="${r.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${r.target}"/>`
+        )
+        .join('')
       zip.file(relsName, rels.replace('</Relationships>', `${extra}</Relationships>`))
     }
   }

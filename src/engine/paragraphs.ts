@@ -33,6 +33,8 @@ export interface StyleRun {
   font: string
   /** Space added between letters for effect, in points (lines read with `reading`). */
   tracking?: number
+  /** The web or mail address the text links to (lines read with `links`). */
+  link?: string
 }
 
 export interface StyledLine {
@@ -104,6 +106,8 @@ export interface Glyph {
   bold: boolean
   italic: boolean
   kind: StyledLine['kind']
+  /** The web or mail address a link over this letter goes to (LineOptions.links). */
+  link?: string
 }
 
 const invisible = (g: { c: string; width: number }): boolean => g.width < 0.01 && (g.c === '�' || g.c === '​')
@@ -193,6 +197,52 @@ export interface LineOptions {
    * editor keeps MuPDF's own order, which its glyph positions follow.
    */
   reading?: boolean
+  /** Each letter under a link to a web or mail address takes that address (StyleRun.link). */
+  links?: boolean
+}
+
+/** How far a letter's box leans right (its top's shift over its height): 0 upright, 0.2–0.3 italic. */
+function leanOf(q: mupdf.Quad): number {
+  const height = q[5] - q[1]
+  return height > 0.1 ? (q[0] - q[4]) / height : 0
+}
+
+/** Addresses a converted document may link to: the web and mail, never a file or a script. */
+const LINKABLE = /^(https?:\/\/|mailto:|ftp:\/\/)/i
+
+/** The page's links to web and mail addresses, with their boxes. */
+function addressLinks(page: mupdf.Page): Array<{ box: Box; uri: string }> {
+  let links: mupdf.Link[] = []
+  try {
+    links = page.getLinks()
+    const out: Array<{ box: Box; uri: string }> = []
+    for (const link of links) {
+      const b = link.getBounds()
+      let uri = ''
+      try {
+        uri = link.getURI() ?? ''
+      } catch {
+        continue
+      }
+      if (b[2] > b[0] && b[3] > b[1] && LINKABLE.test(uri.trim())) out.push({ box: [b[0], b[1], b[2], b[3]], uri: uri.trim() })
+    }
+    return out
+  } catch {
+    return []
+  } finally {
+    free(...links)
+  }
+}
+
+/** Gives each letter the address of the link its middle lies in. */
+function markLinks(glyphs: Glyph[], links: Array<{ box: Box; uri: string }>): void {
+  if (links.length === 0) return
+  for (const g of glyphs) {
+    const x = (g.box[0] + g.box[2]) / 2
+    const y = (g.box[1] + g.box[3]) / 2
+    const hit = links.find((l) => x >= l.box[0] - 0.5 && x <= l.box[2] + 0.5 && y >= l.box[1] - 0.5 && y <= l.box[3] + 0.5)
+    if (hit) g.link = hit.uri
+  }
 }
 
 /** Every line of text on a page, with its style. Lines that are only spaces are left out. */
@@ -224,7 +274,9 @@ export function styledLines(doc: PdfDoc, pageIndex: number, options: LineOptions
           size,
           colour: toRgb(Array.from(colour ?? [])),
           bold: font.isBold() || /bold|black|heavy|semibold/i.test(name),
-          italic: font.isItalic() || /italic|oblique/i.test(name),
+          // Reading: letters slanted by the text matrix are italic too (a fake italic, as Chrome
+          // draws a web font with no italic face: an upright font leaning 0.27 in pdf.pdf).
+          italic: font.isItalic() || /italic|oblique/i.test(name) || (!!options.reading && horizontal && leanOf(quad) > 0.1),
           // The name wins over the font's own flags, which files often get wrong (Work Sans flagged serif).
           kind: kindOf(name, font)
         })
@@ -237,6 +289,7 @@ export function styledLines(doc: PdfDoc, pageIndex: number, options: LineOptions
     if (options.reading) seatClusters(pieces)
     for (const p of pieces) repairLigatureOrder(p.glyphs)
     if (options.reading) weighType3(page, pieces.flatMap((p) => p.glyphs))
+    if (options.links) markLinks(pieces.flatMap((p) => p.glyphs), addressLinks(page))
   } finally {
     free(stext, page)
   }
@@ -324,10 +377,11 @@ function lineOf(kept: Glyph[], horizontal: boolean, rtlGiven?: boolean): StyledL
   const body = letters.length ? letters : printed
   const style = mostCommon(body, (g) => `${Math.round(g.size * 2)}|${g.bold}|${g.italic}|${g.kind}|${g.colour.map((v) => v.toFixed(2)).join(',')}`)
   const rtl = rtlGiven ?? detectDirection(text) === 'rtl'
+  const apart = bulletApart(kept, printed, rtl, style.size)
   // A jump between neighbouring glyphs much wider than a space: a tab stop or a table column.
   // Justified text spreads *every* word gap alike, so only a gap far wider than the line's
-  // other word gaps counts (a narrow justified column is not a table).
-  const byX = [...kept].filter((g) => g.c.trim() !== '').sort((a, b) => a.box[0] - b.box[0])
+  // other word gaps counts (a narrow justified column is not a table). A bullet's tab is neither.
+  const byX = [...kept].filter((g) => g.c.trim() !== '' && g !== apart?.bullet).sort((a, b) => a.box[0] - b.box[0])
   const gaps: number[] = []
   for (let i = 1; i < byX.length; i++) {
     const gap = byX[i]!.box[0] - byX[i - 1]!.box[2]
@@ -345,8 +399,9 @@ function lineOf(kept: Glyph[], horizontal: boolean, rtlGiven?: boolean): StyledL
   const box: Box = [Math.min(...inked.map((g) => g.box[0])), Math.min(...inked.map((g) => g.box[1])), Math.max(...inked.map((g) => g.box[2])), Math.max(...inked.map((g) => g.box[3]))]
   return {
     ...(icons.length ? { icons } : {}),
+    ...(apart ? { marker: apart.marker } : {}),
     text,
-    runs: runsOf(kept),
+    runs: apart ? apart.runs : runsOf(kept),
     box,
     baseline: style.origin[1],
     start: rtl ? box[2] : box[0],
@@ -359,6 +414,30 @@ function lineOf(kept: Glyph[], horizontal: boolean, rtlGiven?: boolean): StyledL
     horizontal,
     mixed: body.some((g) => g.bold !== style.bold || g.italic !== style.italic || Math.abs(g.size - style.size) > 0.6),
     tabular
+  }
+}
+
+const BULLET = /^[•▪◦‣●○■□·❑❖➢➤➔✓]$/u
+
+/**
+ * A bullet set apart from its text by more than a space (a tab in the source): the line's marker,
+ * as joinBullets makes one of a bullet drawn on its own, so the text starts where it was printed.
+ * MuPDF read a guide's "•" and its text as one line, and Office put the text a space after the
+ * bullet, 8 pt before its place and before its own wrapped lines.
+ */
+function bulletApart(kept: Glyph[], printed: Glyph[], rtl: boolean, size: number): { bullet: Glyph; marker: NonNullable<StyledLine['marker']>; runs: StyleRun[] } | null {
+  const [bullet, next] = printed
+  if (!bullet || !next || !BULLET.test(bullet.c)) return null
+  const gap = rtl ? bullet.box[0] - next.box[2] : next.box[0] - bullet.box[2]
+  if (gap < size * 0.6 || gap > size * 4) return null
+  const rest = kept.slice(kept.indexOf(next))
+  const inked = rest.filter((g) => g.c.trim() !== '')
+  const textBox: Box = [Math.min(...inked.map((g) => g.box[0])), Math.min(...inked.map((g) => g.box[1])), Math.max(...inked.map((g) => g.box[2])), Math.max(...inked.map((g) => g.box[3]))]
+  const markerRuns = runsOf([bullet])
+  return {
+    bullet,
+    marker: { runs: markerRuns, box: [...bullet.box], textBox },
+    runs: [...markerRuns.map((r) => ({ ...r, text: `${r.text} ` })), ...runsOf(rest)]
   }
 }
 
@@ -381,11 +460,13 @@ function runsOf(glyphs: Glyph[]): StyleRun[] {
       continue
     }
     const last = runs[runs.length - 1]
-    const same = last && last.bold === g.bold && last.italic === g.italic && Math.abs(last.size - g.size) < 0.6 && last.kind === g.kind && last.font === g.font && last.colour.every((v, i) => Math.abs(v - g.colour[i]!) < 0.02)
+    const same = last && last.bold === g.bold && last.italic === g.italic && Math.abs(last.size - g.size) < 0.6 && last.kind === g.kind && last.font === g.font && last.colour.every((v, i) => Math.abs(v - g.colour[i]!) < 0.02) && last.link === g.link
     if (same) last.text += (pendingSpace ? ' ' : '') + g.c
     else {
-      if (pendingSpace && last) last.text += ' '
-      runs.push({ text: g.c, size: g.size, colour: g.colour, bold: g.bold, italic: g.italic, kind: g.kind, family: g.family, font: g.font })
+      // The space after a link stays out of it.
+      const spaceAfterLink = pendingSpace && !!last?.link
+      if (pendingSpace && last && !spaceAfterLink) last.text += ' '
+      runs.push({ text: (spaceAfterLink ? ' ' : '') + g.c, size: g.size, colour: g.colour, bold: g.bold, italic: g.italic, kind: g.kind, family: g.family, font: g.font, ...(g.link ? { link: g.link } : {}) })
     }
     pendingSpace = false
   }
@@ -429,18 +510,31 @@ const sameStyle = (a: StyledLine, b: StyledLine): boolean => Math.abs(a.size - b
  * partly bold continues its paragraph even when bold wins the line (Office conversion; the
  * editor restyles a paragraph as one, so it keeps them apart).
  */
+const ITEM_BULLET = /^[•▪◦‣●○■□·➢➤✓❑❖➔]\s/u
+const startsItem = (l: StyledLine): boolean => !!l.marker || ITEM_BULLET.test(l.text)
+
 export function paragraphs(lines: StyledLine[], loose = false): Paragraph[] {
   const sorted = [...lines].filter((l) => l.horizontal).sort((a, b) => a.baseline - b.baseline || a.box[0] - b.box[0])
   const groups: StyledLine[][] = []
   for (const line of sorted) {
+    // Loose (conversion): a line that starts with a bullet starts a list item, never continues the
+    // line above — a CV's first bullet line joined its job title, and its own lines fell apart.
+    if (loose && startsItem(line)) {
+      groups.push([line])
+      continue
+    }
     let joined = false
-    // The most recent group this line can continue: directly below its last line.
-    for (let g = groups.length - 1; g >= Math.max(0, groups.length - 4); g--) {
+    // The most recent group this line can continue: directly below its last line. Any group, not
+    // only the last few: a magazine page's cover captions and its other columns started five groups
+    // on the rows between two lines of one letter, which then lost its last word ("slowly!").
+    for (let g = groups.length - 1; g >= 0; g--) {
       const group = groups[g]!
       const last = group[group.length - 1]!
       const gap = line.baseline - last.baseline
       const pitch = group.length > 1 ? group[group.length - 1]!.baseline - group[group.length - 2]!.baseline : null
+      if (gap > Math.max(last.size * 1.75, (pitch ?? 0) + last.size * 0.25)) continue
       const overlap = Math.min(line.box[2], last.box[2]) - Math.max(line.box[0], last.box[0])
+      if (overlap <= 0) continue
       const regular = pitch === null ? gap > last.size * 0.9 && gap < last.size * 1.75 : Math.abs(gap - pitch) < last.size * 0.25
       // A line well short of the column ended its paragraph (the usual last line).
       const column = Math.max(...group.map((l) => l.box[2] - l.box[0]), line.box[2] - line.box[0])

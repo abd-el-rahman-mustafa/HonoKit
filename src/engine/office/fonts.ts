@@ -190,6 +190,30 @@ export function widthIn(text: string, family: string, bold: boolean, italic: boo
   return width
 }
 
+/** Arial's share below the baseline: for a font Office has no metrics for here. */
+const USUAL_DESCENT = 0.2276
+
+/**
+ * How deep below the baseline PowerPoint keeps a line of this font at 100 % spacing, over the size:
+ * the line's 1.2 × size split as the font's winAscent : winDescent (measured on PowerPoint's PDF
+ * export, research §10: Arial and Segoe UI 0.22, Calibri 0.26, Courier New 0.32, Simplified Arabic
+ * 0.35, Sakkal Majalla 0.44 — a fixed 0.26 put Segoe UI lines a third of a point low).
+ */
+export function descentShare(family: string, bold: boolean, italic: boolean): number {
+  const os2 = (fontOf(family, bold, italic) as unknown as { 'OS/2'?: { winAscent?: number; winDescent?: number } } | null)?.['OS/2']
+  const ascent = os2?.winAscent ?? 0
+  const descent = os2?.winDescent ?? 0
+  return ascent > 0 && descent >= 0 ? (1.2 * descent) / (ascent + descent) : USUAL_DESCENT
+}
+
+/** The installed fonts Office draws a run's letters in: its Latin font, its Arabic one, or both. */
+export function drawnFamilies(r: Pick<StyleRun, 'family' | 'kind' | 'text'>): string[] {
+  const f = fontsFor(r)
+  const out = new Set<string>()
+  for (const piece of r.text.match(SCRIPTS) ?? []) if (piece.trim()) out.add(ARABIC.test(piece) ? f.arabic : f.latin)
+  return [...out]
+}
+
 type SampleRun = Pick<StyleRun, 'family' | 'kind' | 'bold' | 'italic' | 'size' | 'text' | 'tracking'>
 type Sample = { runs: SampleRun[]; width: number }
 

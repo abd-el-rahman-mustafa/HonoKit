@@ -244,7 +244,7 @@ function normalise(text: string, options: BuildOptions): string {
 }
 
 const sameStyle = (a: StyleRun, b: StyleRun): boolean =>
-  a.bold === b.bold && a.italic === b.italic && Math.abs(a.size - b.size) < 0.6 && a.family === b.family && a.kind === b.kind && a.colour.every((v, i) => Math.abs(v - b.colour[i]!) < 0.02)
+  a.bold === b.bold && a.italic === b.italic && Math.abs(a.size - b.size) < 0.6 && a.family === b.family && a.kind === b.kind && a.colour.every((v, i) => Math.abs(v - b.colour[i]!) < 0.02) && a.link === b.link
 
 const BULLET = /^([•▪◦‣●○■□·\-–*➢➤✓])\s*/u
 const NUMBER = /^(\(?(?:\d{1,3}|[٠-٩]{1,3}|[a-zA-Z])[.)\-])\s+/u
@@ -430,40 +430,97 @@ function placedTable(grid: StyledGrid, lines: StyledLine[], unmapped: StyledLine
 
 const shapeOf = (d: Drawing): ShapeBlock => ({ kind: 'shape', box: d.box, order: d.call, geometry: d.kind, ops: d.ops, fill: d.fill, stroke: d.stroke, evenOdd: d.evenOdd })
 
-/** Reading order: cut into columns where a gutter runs the whole height, else into bands; recurse. */
+/**
+ * A block's letters' own height: a line's box runs from its font's ascent to its descent, so display
+ * type set tight overlaps the boxes of the lines beside it though its letters do not.
+ */
+function letterBox(b: Block): Box {
+  if (b.kind !== 'paragraph' || !b.lines.length) return b.box
+  const first = b.lines[0]!
+  const last = b.lines[b.lines.length - 1]!
+  return [b.box[0], first.baseline - mainSize(b) * 0.8, b.box[2], last.baseline + mainSize(b) * 0.2]
+}
+
+/**
+ * Reading order: cut into columns where a gutter runs the whole height, else into bands; recurse.
+ * When the boxes cut nowhere, the letters still may: a letters page's centred standfirst sat under
+ * its title (their boxes overlapped by 4 pt) and between its columns, its widest line touching both
+ * of their edges; with neither cut, the page was read row by row across all three columns.
+ */
 function readingOrder(blocks: Block[], rtl: boolean, pageWidth: number): Block[] {
   if (blocks.length <= 1) return blocks
-  const byLeft = [...blocks].sort((a, b) => a.box[0] - b.box[0])
+  return (
+    cutOrder(blocks, rtl, pageWidth, (b) => b.box, 8, 1, false) ??
+    cutOrder(blocks, rtl, pageWidth, letterBox, -1, 0, true) ??
+    // Neither cuts: side by side in reading direction, top to bottom.
+    [...blocks].sort((a, b) => a.box[1] - b.box[1]).sort((a, b) => (Math.abs(a.box[1] - b.box[1]) < 4 ? (rtl ? b.box[2] - a.box[2] : a.box[0] - b.box[0]) : 0))
+  )
+}
+
+/**
+ * One cut of readingOrder, with boxes from `boxOf`, columns at least `gutter` apart and bands `lead`:
+ * null if neither cuts. With `widest`, bands are cut only at their widest gap and what is left is
+ * ordered afresh: letters' heights leave hairline gaps between a standfirst's own lines and between a
+ * row of column headings and their text, and cutting at every one read those headings across the page.
+ */
+function cutOrder(blocks: Block[], rtl: boolean, pageWidth: number, boxOf: (b: Block) => Box, gutter: number, lead: number, widest: boolean): Block[] | null {
+  const boxes = new Map(blocks.map((b) => [b, boxOf(b)]))
+  const at = (b: Block): Box => boxes.get(b)!
+  const byLeft = [...blocks].sort((a, b) => at(a)[0] - at(b)[0])
   const columns: Block[][] = []
   let right = -Infinity
   for (const b of byLeft) {
-    if (columns.length && b.box[0] < right + 8) {
+    if (columns.length && at(b)[0] < right + gutter) {
       columns[columns.length - 1]!.push(b)
-      right = Math.max(right, b.box[2])
+      right = Math.max(right, at(b)[2])
     } else {
       columns.push([b])
-      right = b.box[2]
+      right = at(b)[2]
     }
   }
-  // Real columns are wide; a narrow strip (labels beside values) is read across instead.
-  if (columns.length > 1 && columns.every((c) => Math.max(...c.map((b) => b.box[2])) - Math.min(...c.map((b) => b.box[0])) > pageWidth * 0.18)) {
-    return (rtl ? columns.reverse() : columns).flatMap((c) => readingOrder(c, rtl, pageWidth))
+  // Real columns are wide; a narrow strip (labels beside values) is read across, with the column
+  // beside it: an invoice's "FROM" block came out line by line between its "Date of issue" pairs.
+  // Columns whose paragraphs start on shared baselines are a table's or a form's, read row by row:
+  // an Arabic invoice's labels and values left a gutter down the whole page.
+  const width = (c: Block[]): number => Math.max(...c.map((b) => b.box[2])) - Math.min(...c.map((b) => b.box[0]))
+  const baselineOf = (b: Block): number => (b.kind === 'paragraph' ? (b.lines[0]?.baseline ?? b.box[3]) : b.box[1])
+  /** The share of `a`'s paragraphs that start on a baseline of `b`'s. */
+  const shared = (a: Block[], b: Block[]): number => a.filter((x) => b.some((y) => Math.abs(baselineOf(x) - baselineOf(y)) < 2)).length / Math.max(1, a.length)
+  // Columns that both hold wrapped text are text columns, though a magazine's grid starts them on
+  // shared rows: a letters page's last row (a heading, a letter and its signature in each of three
+  // columns) was read heading, heading, heading, letter, letter, letter.
+  const wraps = (c: Block[]): boolean => c.some((b) => b.kind === 'paragraph' && b.lines.length >= 4)
+  const rowsShared = (a: Block[], b: Block[]): boolean => Math.max(shared(a, b), shared(b, a)) >= 0.5 && !(wraps(a) && wraps(b))
+  // A narrow column joins the neighbour it shares rows with (its values), else the one after it.
+  const groups = columns.map((c) => [...c])
+  for (let i = groups.findIndex((g) => width(g) <= pageWidth * 0.18); groups.length > 1 && i >= 0; i = groups.findIndex((g) => width(g) <= pageWidth * 0.18)) {
+    const before = i > 0 ? shared(groups[i]!, groups[i - 1]!) : -1
+    const after = i + 1 < groups.length ? shared(groups[i]!, groups[i + 1]!) : -1
+    const j = after >= before ? i + 1 : i - 1
+    const a = Math.min(i, j)
+    groups.splice(a, 2, [...groups[a]!, ...groups[a + 1]!])
   }
-  const byTop = [...blocks].sort((a, b) => a.box[1] - b.box[1])
+  if (groups.length > 1 && !groups.some((g, i) => i > 0 && rowsShared(groups[i - 1]!, g))) {
+    return (rtl ? groups.reverse() : groups).flatMap((c) => readingOrder(c, rtl, pageWidth))
+  }
+  const byTop = [...blocks].sort((a, b) => at(a)[1] - at(b)[1])
   const bands: Block[][] = []
+  const gaps: number[] = []
   let bottom = -Infinity
   for (const b of byTop) {
-    if (bands.length && b.box[1] < bottom + 1) {
+    if (bands.length && at(b)[1] < bottom + lead) {
       bands[bands.length - 1]!.push(b)
-      bottom = Math.max(bottom, b.box[3])
+      bottom = Math.max(bottom, at(b)[3])
     } else {
+      if (bands.length) gaps.push(at(b)[1] - bottom)
       bands.push([b])
-      bottom = b.box[3]
+      bottom = at(b)[3]
     }
   }
-  if (bands.length > 1) return bands.flatMap((b) => readingOrder(b, rtl, pageWidth))
-  // Neither cuts: side by side in reading direction, top to bottom.
-  return byTop.sort((a, b) => (Math.abs(a.box[1] - b.box[1]) < 4 ? (rtl ? b.box[2] - a.box[2] : a.box[0] - b.box[0]) : 0))
+  if (bands.length < 2) return null
+  if (!widest) return bands.flatMap((b) => readingOrder(b, rtl, pageWidth))
+  const cut = gaps.indexOf(Math.max(...gaps)) + 1
+  return [bands.slice(0, cut).flat(), bands.slice(cut).flat()].flatMap((b) => readingOrder(b, rtl, pageWidth))
 }
 
 /**
@@ -557,7 +614,7 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
   const count = doc.countPages()
   const targets = options.pages ?? Array.from({ length: count }, (_, i) => i)
   const pageLines = targets.map((p) => {
-    const all = styledLines(doc, p, { reading: true }).filter((l) => l.horizontal)
+    const all = styledLines(doc, p, { reading: true, links: true }).filter((l) => l.horizontal)
     // Lines the file maps to nothing are left out of the text and come back as pictures (§68).
     return { index: p, geometry: pageGeometry(doc, p), lines: all.filter((l) => !pictureLine(l.text)), unreadable: all.filter((l) => pictureLine(l.text)) }
   })

@@ -3,6 +3,7 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
+  ExternalHyperlink,
   Footer,
   FrameAnchorType,
   FrameWrap,
@@ -31,11 +32,11 @@ import {
 } from 'docx'
 import { BRAND } from '@shared/brand'
 import type { StyleRun } from '../paragraphs'
-import type { Block, Box, DocModel, PageModel, ParagraphBlock, PictureBlock, ShapeBlock, TableBlock, TableCell as CellBlock } from './model'
+import type { Block, Box, DocModel, LineBlock, PageModel, ParagraphBlock, PictureBlock, ShapeBlock, TableBlock, TableCell as CellBlock } from './model'
 import type { Rule } from './scene'
 import { directedRuns, type DirectedRun } from './bidiruns'
 import { EMU, hex, shapeParts, svgExtension } from './drawingml'
-import { joinedRuns, textBoxes, type TextBox } from './fit'
+import { joinedRuns, linkTrimmed, textBoxes, type TextBox } from './fit'
 import { fontsFor } from './fonts'
 
 /**
@@ -65,8 +66,31 @@ const twips = (pt: number): number => Math.round(pt * 20)
 const pixels = (pt: number): number => Math.max(1, Math.round((pt * 96) / 72))
 const hasArabic = (s: string): boolean => /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/.test(s)
 
-function run(r: StyleRun | DirectedRun, extra: Partial<IRunOptions> = {}): TextRun {
-  const half = Math.round(r.size * 2)
+/**
+ * A run's size as Word keeps it — in half points, so 8.25 pt prints at 8.5, 3 % wider — and Word's
+ * character scale (w:w, whole percents) narrowing it back to the PDF's width: Arabic takes no letter
+ * spacing to make up for it (fit.ts). `width` is the size its letters are then as wide as.
+ */
+function wordSize(r: Pick<StyleRun, 'size'>): { half: number; scale: number; width: number } {
+  const half = Math.max(2, Math.round(r.size * 2))
+  const scale = Math.abs(half - r.size * 2) > 0.01 ? Math.max(1, Math.min(600, Math.round((r.size * 200) / half))) : 100
+  return { half, scale, width: (half / 2) * (scale / 100) }
+}
+
+/**
+ * A run of text in its style; under a link of the PDF, a Word hyperlink (the text keeps its own
+ * look), its spaces before and after left out of it. `extra` applies to the first piece (a break).
+ */
+function run(r: StyleRun | DirectedRun, extra: Partial<IRunOptions> = {}): Array<TextRun | ExternalHyperlink> {
+  const { break: _break, ...rest } = extra
+  return linkTrimmed(r).map((piece, i) => {
+    const text = styledRun(piece, i === 0 ? extra : rest)
+    return piece.link ? new ExternalHyperlink({ link: piece.link, children: [text] }) : text
+  })
+}
+
+function styledRun(r: StyleRun | DirectedRun, extra: Partial<IRunOptions>): TextRun {
+  const { half, scale } = wordSize(r)
   const fonts = fontsFor(r)
   return new TextRun({
     text: r.text,
@@ -81,6 +105,7 @@ function run(r: StyleRun | DirectedRun, extra: Partial<IRunOptions> = {}): TextR
     rightToLeft: 'rtl' in r ? r.rtl : hasArabic(r.text),
     language: { value: 'en-US', bidirectional: 'ar-AE' },
     ...(r.tracking ? { characterSpacing: twips(r.tracking) } : {}),
+    ...(scale !== 100 ? { scale } : {}),
     ...extra
   })
 }
@@ -89,7 +114,7 @@ const ALIGN = { start: AlignmentType.START, end: AlignmentType.END, centre: Alig
 const HEADINGS = [undefined, HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3] as const
 
 function paragraph(b: ParagraphBlock, pageBreakBefore = false): Paragraph {
-  const runs = directedRuns(b.runs.map((r, i) => (i === 0 && b.list === 'number' ? { ...r, text: `${b.marker} ${r.text}` } : r)), b.rtl).map((r) => run(r))
+  const runs = directedRuns(b.runs.map((r, i) => (i === 0 && b.list === 'number' ? { ...r, text: `${b.marker} ${r.text}` } : r)), b.rtl).flatMap((r) => run(r))
   const indent = b.list ? { start: twips(18), hanging: twips(18) } : b.firstIndent > 0 ? { firstLine: twips(b.firstIndent) } : b.firstIndent < 0 ? { hanging: twips(-b.firstIndent) } : undefined
   return new Paragraph({
     children: runs,
@@ -269,12 +294,18 @@ function pictureRun(d: Drawings, b: PictureBlock): TextRun {
 const wordBaselineIn = (line: number): number => line * 0.8
 
 /**
- * A paragraph's text boxes measured at the sizes Word will print: Word keeps sizes in half points, so
- * 8.25 pt text is 8.5 pt there, 3 % wider — enough to wrap a line that just fitted (an Arabic invoice).
+ * A paragraph's text boxes measured as wide as Word will print them (wordSize): at 8.5 pt, 8.25 pt
+ * text is 3 % wider — enough to wrap a line that just fitted (an Arabic invoice). The boxes keep the
+ * paragraph's own lines (run() turns their sizes into Word's).
  */
 function wordBoxes(b: ParagraphBlock): TextBox[] {
-  const lines = b.lines.map((l) => ({ ...l, runs: l.runs.map((r) => ({ ...r, size: Math.round(r.size * 2) / 2 })) }))
-  return textBoxes({ ...b, lines })
+  const own = new Map<LineBlock, LineBlock>()
+  const lines = b.lines.map((l) => {
+    const measured = { ...l, runs: l.runs.map((r) => ({ ...r, size: wordSize(r).width })) }
+    own.set(measured, l)
+    return measured
+  })
+  return textBoxes({ ...b, lines }).map((tb) => ({ ...tb, lines: tb.lines.map((l) => own.get(l) ?? l) }))
 }
 
 /** Word's exact line height for a box: its pitch, never less than most of its letters. */
@@ -285,10 +316,10 @@ const characterSpacing = (spacing: number | undefined): Partial<IRunOptions> => 
 /** A text box's runs: the paragraph's text when Word wraps it, else its lines with a break after each. */
 function boxRuns(b: ParagraphBlock, tb: TextBox): ParagraphChild[] {
   const out: ParagraphChild[] = []
-  if (tb.wrap) for (const r of directedRuns(joinedRuns(tb.lines), b.rtl)) out.push(run({ ...r, tracking: 0 }, characterSpacing(tb.spacing[0])))
+  if (tb.wrap) for (const r of directedRuns(joinedRuns(tb.lines), b.rtl)) out.push(...run({ ...r, tracking: 0 }, characterSpacing(tb.spacing[0])))
   else
     tb.lines.forEach((l, i) =>
-      directedRuns(l.runs, b.rtl).forEach((r, k) => out.push(run({ ...r, tracking: 0 }, { ...characterSpacing(tb.spacing[i]), ...(i > 0 && k === 0 ? { break: 1 } : {}) })))
+      directedRuns(l.runs, b.rtl).forEach((r, k) => out.push(...run({ ...r, tracking: 0 }, { ...characterSpacing(tb.spacing[i]), ...(i > 0 && k === 0 ? { break: 1 } : {}) })))
     )
   return out
 }

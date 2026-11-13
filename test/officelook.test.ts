@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFString, StandardFonts, degrees, rgb } from 'pdf-lib'
 import { embedFace } from '@engine/fonts'
 import { exportOffice, modelOf } from '@engine/office'
 import type { ParagraphBlock } from '@engine/office/model'
@@ -126,6 +126,19 @@ describe('PDF to Office: keeping the look', () => {
     expect(body?.runs.every((r) => !r.bold)).toBe(true)
   })
 
+  it('reads letters slanted by the text matrix as italic (a fake italic, as Chrome draws one)', async () => {
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 300])
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    page.drawText('An upright line comes first here', { x: 40, y: 250, size: 12, font })
+    // pdf-lib's ySkew moves each letter's top right (the matrix's c): an italic's lean.
+    page.drawText('Nulla facilisi leaning over', { x: 40, y: 200, size: 12, font, ySkew: degrees(15) })
+    const paras = paragraphsOf(modelOf(new Uint8Array(await pdf.save()), BASE))
+    const italic = (start: string): boolean | undefined => paras.find((p) => words(p).startsWith(start))?.runs.every((r) => r.italic)
+    expect(italic('An upright')).toBe(false)
+    expect(italic('Nulla facilisi')).toBe(true)
+  })
+
   it('puts Word pictures over the page background, in Word z-order', async () => {
     const pdf = await PDFDocument.create()
     const page = pdf.addPage([400, 300])
@@ -164,6 +177,59 @@ describe('PDF to Office: keeping the look', () => {
     }
   })
 
+  it("puts a PowerPoint line's baseline where the font's own depth puts it (Arial, Courier New)", async () => {
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 300])
+    page.drawText('Arial line of text here', { x: 40, y: 250, size: 10, font: await pdf.embedFont(StandardFonts.Helvetica) })
+    page.drawText('Courier line of text', { x: 200, y: 150, size: 10, font: await pdf.embedFont(StandardFonts.Courier) })
+    const xml = await slide((await exportOffice(new Uint8Array(await pdf.save()), { ...BASE, format: 'pptx' })).bytes)
+    const tops = [...xml.matchAll(/<a:off x="(\d+)" y="(\d+)"\/>/g)].map((m) => ({ x: Number(m[1]) / 12700, y: Number(m[2]) / 12700 }))
+    const topOf = (x: number): number => tops.find((t) => Math.abs(t.x - x) < 1)!.y
+    // At 100 % PowerPoint keeps 1.2 × winDescent / (winAscent + winDescent) of the size below the
+    // baseline: 0.228 for Arial, 0.318 for Courier New (a fixed 0.26 put lines a third of a point off).
+    expect(topOf(40)).toBeCloseTo(50 - (12 - 2.28), 1)
+    expect(topOf(200)).toBeCloseTo(150 - (12 - 3.18), 1)
+  })
+
+  it("narrows a size Word rounds to half points back to the PDF's width (w:w)", async () => {
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 300])
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    page.drawText('Small print at eight and a quarter', { x: 40, y: 250, size: 8.25, font })
+    page.drawText('Body text at nine points', { x: 40, y: 200, size: 9, font })
+    const doc = await (await JSZip.loadAsync((await exportOffice(new Uint8Array(await pdf.save()), { ...BASE, format: 'docx' })).bytes)).file('word/document.xml')!.async('string')
+    const runOf = (text: string): string => doc.match(new RegExp(`<w:r>(?:(?!</w:r>).)*${text}`))![0]
+    // 8.25 pt is 8.5 pt in Word (17 half points), scaled to 97 %; 9 pt needs no scale.
+    expect(runOf('Small print')).toMatch(/<w:w w:val="97"\/>[\s\S]*<w:sz w:val="17"\/>/)
+    expect(runOf('Body text')).not.toContain('<w:w ')
+  })
+
+  it("keeps the PDF's web links as links in Word and PowerPoint, and leaves script links out", async () => {
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 300])
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    page.drawText('Read the guide online today', { x: 40, y: 250, size: 12, font })
+    const x0 = 40 + font.widthOfTextAtSize('Read ', 12)
+    const x1 = x0 + font.widthOfTextAtSize('the guide online', 12)
+    const x2 = x1 + font.widthOfTextAtSize(' ', 12)
+    const link = (rect: number[], uri: string) => pdf.context.register(pdf.context.obj({ Type: 'Annot', Subtype: 'Link', Rect: rect, Border: [0, 0, 0], A: { Type: 'Action', S: 'URI', URI: PDFString.of(uri) } }))
+    page.node.set(PDFName.of('Annots'), pdf.context.obj([link([x0, 245, x1, 262], 'https://example.com/guide?a=1&b=2'), link([x2, 245, x2 + 30, 262], 'javascript:alert(1)')]))
+    const bytes = new Uint8Array(await pdf.save())
+    const word = await JSZip.loadAsync((await exportOffice(bytes, { ...BASE, format: 'docx' })).bytes)
+    const doc = await word.file('word/document.xml')!.async('string')
+    const rels = await word.file('word/_rels/document.xml.rels')!.async('string')
+    // The link holds just its words: the spaces around it stay outside.
+    expect(doc).toMatch(/<w:hyperlink [^>]*r:id="([^"]+)"[^>]*>(?:(?!<\/w:hyperlink>).)*>the guide online<\/w:t>/)
+    expect(rels).toContain('Target="https://example.com/guide?a=1&amp;b=2" TargetMode="External"')
+    expect(rels).not.toContain('javascript')
+    const deck = await JSZip.loadAsync((await exportOffice(bytes, { ...BASE, format: 'pptx' })).bytes)
+    const xml = await deck.file('ppt/slides/slide1.xml')!.async('string')
+    const slideRels = await deck.file('ppt/slides/_rels/slide1.xml.rels')!.async('string')
+    expect(xml).toMatch(/<a:hlinkClick r:id="rIdHkL1">(?:(?!<\/a:r>).)*<a:t>the guide online<\/a:t>/)
+    expect(xml.match(/<a:hlinkClick /g)).toHaveLength(1)
+    expect(slideRels).toContain('Id="rIdHkL1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/guide?a=1&amp;b=2" TargetMode="External"')
+  })
+
   it('draws a bullet apart from its text, which starts where it was printed', async () => {
     const pdf = await PDFDocument.create()
     const page = pdf.addPage([400, 300])
@@ -181,6 +247,26 @@ describe('PDF to Office: keeping the look', () => {
     // Flowing Word still sees a list.
     const flow = await (await JSZip.loadAsync((await exportOffice(bytes, { ...BASE, format: 'docx', layout: 'flow' })).bytes)).file('word/document.xml')!.async('string')
     expect(flow).toContain('<w:numPr>')
+  })
+
+  it('draws apart a bullet that shares its text\'s line but stands well before it', async () => {
+    // One line of text: the bullet, a gap of four spaces, the words (a guide set them with a tab).
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 300])
+    const font = await embedFace(pdf, 'latin')
+    const lead = '•    '
+    page.drawText(`${lead}Access is available only to registered companies`, { x: 62, y: 240, size: 11, font })
+    page.drawText(`${lead}Every user needs an account`, { x: 62, y: 222, size: 11, font })
+    const bytes = new Uint8Array(await pdf.save())
+    const item = paragraphsOf(modelOf(bytes, BASE)).find((p) => words(p).includes('Access is'))!
+    expect(item.lines[0]!.marker).toBeDefined()
+    const textAt = 62 + font.widthOfTextAtSize(lead, 11)
+    expect(item.lines[0]!.box[0]).toBeCloseTo(textAt, 0)
+    // PowerPoint: the text box starts where the words did, not a space after the bullet.
+    const xml = await slide((await exportOffice(bytes, { ...BASE, format: 'pptx' })).bytes)
+    const offs = [...xml.matchAll(/<a:off x="(\d+)"/g)].map((m) => Number(m[1]) / 12700)
+    expect(offs.some((x) => Math.abs(x - textAt) < 0.3)).toBe(true)
+    expect(xml).toMatch(/<a:t>•<\/a:t>/)
   })
 
   it('keeps an icon the file maps to nothing as a picture before its text', async () => {

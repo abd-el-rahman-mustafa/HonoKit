@@ -205,6 +205,19 @@ function boxFor(b: ParagraphBlock, lines: LineBlock[]): TextBox {
 }
 
 /** The paragraph's text for a wrapping box: its lines joined with a space, in one run list. */
+/**
+ * A run with a link, its spaces before and after kept out of the link: PowerPoint underlines linked
+ * text, and a CV's links took in the space after their icon (" ORCID").
+ */
+export function linkTrimmed<T extends { text: string; link?: string }>(r: T): T[] {
+  if (!r.link) return [r]
+  const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(r.text)
+  if (!m || !m[2] || (!m[1] && !m[3])) return [r]
+  const { link: _link, ...plain } = r
+  const space = (text: string): T[] => (text ? [{ ...plain, text } as T] : [])
+  return [...space(m[1]!), { ...r, text: m[2] }, ...space(m[3]!)]
+}
+
 export function joinedRuns(lines: LineBlock[]): LineBlock['runs'] {
   const out: LineBlock['runs'] = []
   lines.forEach((l, i) => {
