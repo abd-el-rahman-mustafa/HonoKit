@@ -94,24 +94,29 @@ describe('PDF to Office: the files', () => {
     expect(r.tables).toBe(1)
   })
 
-  it('writes Word that keeps the look: a page per page, its drawings behind, text in frames where it was', async () => {
+  it('writes Word that keeps the look: a page per page, a real table, the picture behind, text in frames where it was', async () => {
     const r = await exportOffice(await makeReport(), { ...BASE, format: 'docx' })
     const xml = await (await JSZip.loadAsync(r.bytes)).file('word/document.xml')!.async('string')
     // A section per PDF page, of the page's size.
     expect(xml.match(/<w:sectPr/g)).toHaveLength(2)
     expect(xml).toContain('w:w="11900" w:h="16840"')
-    // The table's rules and the picture are drawn: the page's drawings behind the text, the picture floating.
-    expect(xml.match(/behindDoc="1"/g)!.length).toBeGreaterThanOrEqual(2)
+    // The picture is drawn behind the text where it was on the page.
+    expect(xml.match(/behindDoc="1"/g)!.length).toBeGreaterThanOrEqual(1)
     expect(xml).toContain('<wp:positionH relativeFrom="page">')
-    // Text is in frames at its place, as printed; the Arabic line right to left with its own font slot.
+    // The ruled table is a Word table floating at its place, its words in its cells.
+    const table = xml.slice(xml.indexOf('<w:tbl>'), xml.indexOf('</w:tbl>'))
+    expect(table).toContain('<w:tblpPr')
+    expect(table).toContain('Region')
+    expect(table).toContain('1,200')
+    // Text is in frames at its place, as printed; the Arabic line right to left, its words whole.
     expect(xml).toContain('<w:framePr')
     expect(xml).toContain('Annual Report')
-    expect(xml).toContain('Region')
     expect(xml).toContain('<w:bidi/>')
-    expect(xml).toContain('تقرير سنوي')
+    expect(xml.replace(/<[^>]+>/g, '')).toContain('الشركة في دبي')
+    // The paragraph's two lines are one paragraph Word wraps itself.
+    expect(xml).toMatch(/every quarter <\/w:t>[\s\S]*?and the new office/)
     // The running footer stays on each page where it was (no Word footer).
     expect(xml).toContain('Page 1 of 2')
-    expect(xml).not.toContain('<w:tbl>')
   })
 
   it('writes PowerPoint with a slide per page', async () => {
@@ -122,11 +127,15 @@ describe('PDF to Office: the files', () => {
     const one = await zip.file('ppt/slides/slide1.xml')!.async('string')
     expect(one).toContain('Annual Report')
     expect(one).toContain('rtl="1"')
-    // The page's drawings (the table's rules) are the slide's background; the table's words are text over them.
-    expect(one).toMatch(/<p:bg>[\s\S]*<a:blip r:embed=/)
-    expect(one).toContain('Region')
-    expect(one).not.toContain('<a:tbl>')
-    // Lines are kept as printed: no wrapping anew, no shrinking.
+    expect(one).toContain('الشركة في دبي')
+    // No picture of the page behind it: the ruled table is a table, the picture a picture.
+    expect(one).not.toContain('<p:bg>')
+    const table = one.slice(one.indexOf('<a:tbl>'), one.indexOf('</a:tbl>'))
+    expect(table).toContain('Region')
+    expect(table).toContain('<a:lnB w=')
+    expect(one).toContain('<p:pic>')
+    // A paragraph's lines are one paragraph PowerPoint wraps where the PDF did; a single line does not wrap.
+    expect(one).toMatch(/wrap="square"[\s\S]*?every quarter <\/a:t><\/a:r><a:r>[\s\S]*?<a:t>and the new office/)
     expect(one).toContain('wrap="none"')
     // Each script its own font, and no Chinese code-page charsets (Office substituted a Chinese font).
     expect(one).not.toMatch(/charset="-12/)

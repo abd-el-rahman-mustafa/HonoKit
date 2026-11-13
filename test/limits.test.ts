@@ -186,7 +186,7 @@ describe('Word export', () => {
       rtl: false
     })
     const xml = async (n: number): Promise<string> => {
-      const docx = await writeDocx({ pages: [{ width: 1200, height: 800, blocks: [wide(n)], rtl: false, background: null }], header: null, footer: null, bodySize: 8 }, { layout: 'flow', pageBreaks: false })
+      const docx = await writeDocx({ pages: [{ width: 1200, height: 800, blocks: [wide(n)], rtl: false, drawn: [] }], header: null, footer: null, bodySize: 8 }, { layout: 'flow', pageBreaks: false })
       return (await JSZip.loadAsync(docx)).file('word/document.xml')!.async('string')
     }
     expect(await xml(63)).toContain('<w:tbl>')

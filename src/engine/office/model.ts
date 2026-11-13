@@ -1,4 +1,6 @@
 import type { Alignment, StyleRun } from '../paragraphs'
+import type { Paint, PathOp, RGB, Stroke } from './drawings'
+import type { Rule } from './scene'
 
 /**
  * The document as the Office writers see it (docs/research-pdf-to-office.md §6): pages of
@@ -47,6 +49,24 @@ export interface PictureBlock {
   /** Pixels of the picture itself. */
   width: number
   height: number
+  /** The same drawing as SVG (plain vectors); `data` is then its PNG stand-in for Office without SVG. */
+  svg?: Uint8Array
+  /** Positioned writers: paint order among the page's drawings. */
+  order?: number
+}
+
+/** A drawing Office redraws as a shape (positioned writers): a rectangle, a line or an outline. */
+export interface ShapeBlock {
+  kind: 'shape'
+  box: Box
+  /** Paint order among the page's drawings. */
+  order: number
+  geometry: 'rect' | 'line' | 'path'
+  /** The outline in page points. */
+  ops: PathOp[]
+  fill: Paint | null
+  stroke: Stroke | null
+  evenOdd: boolean
 }
 
 export interface TableCell {
@@ -55,6 +75,10 @@ export interface TableCell {
   pictures: PictureBlock[]
   /** Columns this cell spans. */
   span: number
+  /** Positioned writers: the cell's place, rules and fill as drawn (scene.ts). */
+  box?: Box
+  borders?: { top: Rule | null; bottom: Rule | null; left: Rule | null; right: Rule | null }
+  shading?: RGB | null
 }
 
 export interface TableBlock {
@@ -66,6 +90,8 @@ export interface TableBlock {
   rowHeights: number[]
   rows: TableCell[][]
   rtl: boolean
+  /** Built from the page's drawings for positioned writers: cells left to right whatever the direction, with their rules and fills. */
+  placed?: boolean
 }
 
 export type Block = ParagraphBlock | PictureBlock | TableBlock
@@ -76,8 +102,11 @@ export interface PageModel {
   blocks: Block[]
   /** Mostly Arabic: columns are read right to left, and the page is an RTL page. */
   rtl: boolean
-  /** The page's drawings without text or pictures (built with `art`), to lie behind everything. */
-  background: PictureBlock | null
+  /**
+   * Positioned writers (built with `art`): the page's drawings in paint order — shapes Office draws
+   * itself, art as pictures (SVG when plain vectors) and the page's pictures. Text and tables lie above.
+   */
+  drawn: Array<ShapeBlock | PictureBlock>
 }
 
 export interface DocModel {

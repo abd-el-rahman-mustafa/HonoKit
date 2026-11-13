@@ -92,7 +92,7 @@ function toRgb(colour: number[] | undefined): [number, number, number] {
   return [colour[0]!, colour[1]!, colour[2]!]
 }
 
-interface Glyph {
+export interface Glyph {
   c: string
   width: number
   box: Box
@@ -107,6 +107,72 @@ interface Glyph {
 }
 
 const invisible = (g: { c: string; width: number }): boolean => g.width < 0.01 && (g.c === '�' || g.c === '​')
+
+const MARK = /\p{M}/u
+
+/**
+ * Chrome prints a letter with its marks (meem with tanween, jeem with shadda and fatha) as one
+ * cluster: its letters come at zero width where the cluster starts, marks first, and the glyph
+ * that draws them reads as a space at the same place with their width, or as nothing (its width
+ * is then the room up to the next letter). Office drew the marks on the wrong letters, and a
+ * word's first letters were split off as a line of their own. The letters take that box (the
+ * letter first, its marks after it) and the false space goes (decisions §118).
+ */
+export function seatClusters(pieces: Array<{ glyphs: Glyph[] }>): void {
+  const all = pieces.flatMap((p) => p.glyphs)
+  if (!all.some((g) => g.width < 0.01 && g.c.trim() !== '' && !MARK.test(g.c))) return
+  const spaces = all.filter((g) => g.c === ' ' && g.width > 0.5)
+  const drawn = all.filter((g) => g.width >= 0.01)
+  /**
+   * The room right of `g`'s origin up to the next glyph on its line (a space too); null when a glyph
+   * starts there. The cluster may begin inside the letter before it (Chrome tucks it in), or a little
+   * after its end ("تُنقل": the gap read as a word space), where it then starts. With nothing after it
+   * (a word's first letter at a right-to-left line's end: "أُعيد" came out "عأيد") it takes a
+   * letter's usual width.
+   */
+  const room = (g: Glyph): Box | null => {
+    const x = g.origin[0]
+    const same = drawn.filter((o) => Math.abs(o.origin[1] - g.origin[1]) < g.size * 0.5)
+    if (same.some((o) => Math.abs(o.origin[0] - x) < 0.05)) return null
+    const next = Math.min(...same.filter((o) => o.box[0] > x + 0.5).map((o) => o.box[0]))
+    const before = Math.max(...same.filter((o) => o.box[2] <= x + 0.05 && o.box[2] > x - g.size * 0.3).map((o) => o.box[2]))
+    const start = Number.isFinite(before) ? Math.min(before, x) : x
+    const end = next - x < g.size * 1.5 ? next : x + g.size * 0.3
+    return [start, g.box[1], end, g.box[3]]
+  }
+  const used = new Set<Glyph>()
+  for (const p of pieces) {
+    const gs = p.glyphs
+    for (let i = 0; i < gs.length; i++) {
+      const g = gs[i]!
+      if (g.width >= 0.01 || g.c.trim() === '') continue
+      let j = i
+      while (j + 1 < gs.length && gs[j + 1]!.width < 0.01 && gs[j + 1]!.c.trim() !== '' && Math.abs(gs[j + 1]!.origin[0] - g.origin[0]) < 0.05) j++
+      const run = gs.slice(i, j + 1)
+      // Chrome's clusters are letters with their marks. A lone letter at zero width is the end of a
+      // ligature (lam-alef's alef; the yeh of "في" in a font with that ligature, where a real word
+      // space starts — taken for a false space, it ate the space: "الشركةيف"), which stays with the
+      // letter before it (clustersOf).
+      if (run.every((x) => MARK.test(x.c)) || !run.some((x) => MARK.test(x.c))) {
+        i = j
+        continue
+      }
+      const space = spaces.find((s) => !used.has(s) && s.font === g.font && Math.abs(s.origin[0] - g.origin[0]) < 0.05 && Math.abs(s.origin[1] - g.origin[1]) < g.size * 0.5)
+      const box = space ? space.box : room(g)
+      if (box) {
+        if (space) used.add(space)
+        const seated = [...run.filter((x) => !MARK.test(x.c)), ...run.filter((x) => MARK.test(x.c))]
+        seated.forEach((x, k) => {
+          x.box = [box[0], Math.min(x.box[1], box[1]), box[2], Math.max(x.box[3], box[3])]
+          x.width = k === 0 ? box[2] - box[0] : 0
+        })
+        gs.splice(i, run.length, ...seated)
+      }
+      i = j
+    }
+  }
+  if (used.size) for (const p of pieces) p.glyphs = p.glyphs.filter((g) => !used.has(g))
+}
 
 function mostCommon<T>(values: T[], key: (v: T) => string): T {
   const counts = new Map<string, { n: number; v: T }>()
@@ -164,11 +230,12 @@ export function styledLines(doc: PdfDoc, pageIndex: number, options: LineOptions
         })
       },
       endLine() {
-        const kept = glyphs.filter((g) => !invisible(g))
-        repairLigatureOrder(kept)
-        pieces.push({ glyphs: kept, horizontal })
+        pieces.push({ glyphs: glyphs.filter((g) => !invisible(g)), horizontal })
       }
     })
+    // The page's lines are all read before clusters are seated: a cluster's glyph is in another line.
+    if (options.reading) seatClusters(pieces)
+    for (const p of pieces) repairLigatureOrder(p.glyphs)
     if (options.reading) weighType3(page, pieces.flatMap((p) => p.glyphs))
   } finally {
     free(stext, page)

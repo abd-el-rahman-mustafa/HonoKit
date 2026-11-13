@@ -33,6 +33,9 @@ const SEPARATOR = /[.,:/\u060C\u066B\u066C-]/
 const MARK = /\p{M}/u
 const MIRROR: Record<string, string> = { '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{', '<': '>', '>': '<', '\u00AB': '\u00BB', '\u00BB': '\u00AB', '\u2039': '\u203A', '\u203A': '\u2039' }
 
+const OPENING = '([{'
+const CLOSING = ')]}'
+
 /** Symbol and Wingdings private codes used as list bullets, as the characters they draw. */
 const SYMBOL_BULLETS: Record<string, string> = {
   '\uF0B7': '\u2022',
@@ -108,18 +111,22 @@ export function readingOrder<G extends Placed>(clusters: G[][]): Ordered<G> {
     const gaps: number[] = []
     let spaced = 0
     let pairs = 0
+    // Letters with nothing between them yet apart (MuPDF adds no space for a small gap): letter-spaced too.
+    let apart = 0
     for (let i = 0, prev = -1; i < visual.length; i++) {
       if (blank(visual[i]!)) continue
       if (prev >= 0) {
         pairs++
+        const gap = left(visual[i]!) - right(visual[prev]!)
         if (i - prev > 1) spaced++
-        gaps.push(left(visual[i]!) - right(visual[prev]!))
+        else if (gap > size * 0.1) apart++
+        gaps.push(gap)
       }
       prev = i
     }
     const sorted = [...gaps].sort((a, b) => a - b)
     const typical = sorted[Math.floor(sorted.length / 2)]!
-    if (pairs > 0 && spaced / pairs > 0.6 && typical > size * 0.12) {
+    if (pairs > 0 && ((spaced / pairs > 0.6 && typical > size * 0.12) || apart / pairs > 0.6)) {
       tracking = typical
       // A word space is wider than the letter gap by about a space's width.
       visual = visual.filter((k, i) => {
@@ -130,6 +137,23 @@ export function readingOrder<G extends Placed>(clusters: G[][]): Ordered<G> {
         return left(after) - right(before) > typical + size * 0.18
       })
     }
+  }
+
+  // A word gap with no space in the file (a justified line set with positioned words: "TaughtAdvanced"
+  // in a CV): a gap wider than a tenth of the letters' size is a space. Kerning moves letters a few
+  // hundredths; joined Arabic letters have none.
+  if (tracking === 0) {
+    const spaced: G[][] = []
+    for (const k of visual) {
+      const prev = spaced[spaced.length - 1]
+      if (prev && !blank(prev) && !blank(k)) {
+        const gap = left(k) - right(prev)
+        const g = prev[0]!
+        if (gap > Math.max(g.size, k[0]!.size) * 0.1) spaced.push([{ ...g, c: ' ', width: gap, box: [right(prev), g.box[1], left(k), g.box[3]] }])
+      }
+      spaced.push(k)
+    }
+    visual = spaced
   }
 
   const kinds = visual.map((k) => kindOf(k[0]!.c))
@@ -162,6 +186,16 @@ export function readingOrder<G extends Placed>(clusters: G[][]): Ordered<G> {
 
   let seq = visual.map((k, i) => ({ k, t: resolved[i]! }))
   const mirrored = new Set<G[]>()
+  /**
+   * Brackets right to left, as drawn (`drawn`, left to right), to be mirrored back — unless the file
+   * already has them as read: a bracket pair whose left one is a closing bracket (Chrome writes the
+   * character, not the shape drawn: "(5%)" in an Arabic line came out ")5%(").
+   */
+  const mirror = (drawn: Array<G[]>): void => {
+    const brackets = drawn.filter((k) => OPENING.includes(k[0]!.c) || CLOSING.includes(k[0]!.c))
+    const asRead = brackets.some((k) => OPENING.includes(k[0]!.c)) && CLOSING.includes(brackets[0]?.[0]!.c ?? '')
+    if (!asRead) for (const k of drawn) mirrored.add(k)
+  }
   if (rtl) {
     seq.reverse()
     // Latin words and numbers read left to right inside the Arabic line; brackets outside them are mirrored back.
@@ -172,9 +206,8 @@ export function readingOrder<G extends Placed>(clusters: G[][]): Ordered<G> {
       seq.splice(a, run.length, ...run)
       for (let i = a; i <= b; i++) inside.add(i)
     }
-    seq.forEach((e, i) => {
-      if (e.t === 'N' && !inside.has(i)) mirrored.add(e.k)
-    })
+    const outside = new Set(seq.filter((e, i) => e.t === 'N' && !inside.has(i)).map((e) => e.k))
+    mirror(visual.filter((k) => outside.has(k)))
   } else {
     // Arabic runs inside a Latin line read right to left; their numbers stay left to right.
     const out: typeof seq = []
@@ -190,9 +223,10 @@ export function readingOrder<G extends Placed>(clusters: G[][]): Ordered<G> {
         if (seq[j]!.t === 'L') break
         if (seq[j]!.t === 'R') end = j
       }
-      let run = seq.slice(i, end + 1).reverse()
+      const drawn = seq.slice(i, end + 1)
+      mirror(drawn.filter((e) => e.t === 'N').map((e) => e.k))
+      let run = [...drawn].reverse()
       run = reverseRuns(run, ['EN'], ['R', 'L', 'N'])
-      for (const e of run) if (e.t === 'N') mirrored.add(e.k)
       out.push(...run)
       i = end + 1
     }

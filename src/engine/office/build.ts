@@ -2,8 +2,10 @@ import { pageGeometry } from '../render'
 import { free, mupdf, type PdfDoc } from '../mupdf'
 import { paragraphs, styledLines, type Paragraph, type StyledLine, type StyleRun } from '../paragraphs'
 import { foldString, UNMAPPED, unreadable, withoutUnmapped } from '../text'
-import { pageArt, regionPicture } from './art'
-import type { Block, Box, DocModel, LineBlock, PageModel, ParagraphBlock, PictureBlock, TableBlock, TableCell } from './model'
+import { artPicture, placedPicture, regionPicture } from './art'
+import { pageDrawings, type Drawing } from './drawings'
+import type { Block, Box, DocModel, LineBlock, PageModel, ParagraphBlock, PictureBlock, ShapeBlock, TableBlock, TableCell } from './model'
+import { scene, type StyledGrid } from './scene'
 
 /**
  * PDF pages → the Office model (docs/research-pdf-to-office.md §6.2, phase A): lines with
@@ -19,8 +21,8 @@ export interface BuildOptions {
   removeTatweel: boolean
   digits: 'keep' | 'western' | 'arabic'
   /**
-   * Positioned writers (PowerPoint, Word "keep the look"): each page's drawings without text as
-   * its background, pictures cut from the page as drawn (art.ts). CHANGES THE DOCUMENT given.
+   * Positioned writers (PowerPoint, Word "keep the look"): each page's drawings as shapes, tables
+   * with their rules and fills, art and pictures as drawn (scene.ts, art.ts).
    */
   art?: boolean
   /** Flowing writers: drawings with many parts (a chart, a logo) become pictures, their labels with them. */
@@ -369,6 +371,65 @@ function tableBlock(grid: Grid, lines: StyledLine[], unmapped: StyledLine[], cro
   return rtl ? { kind: 'table', box: grid.box, columns: columns.reverse(), rowHeights, rows: rows.map((row) => [...row].reverse()), rtl } : { kind: 'table', box: grid.box, columns, rowHeights, rows, rtl }
 }
 
+/**
+ * A table as drawn (positioned writers): its cells where the rules put them, left to right, each with
+ * its rules and fill. Cells with no rule between them that a line of text crosses are one cell.
+ */
+function placedTable(grid: StyledGrid, lines: StyledLine[], unmapped: StyledLine[], crop: Crop, options: BuildOptions): TableBlock {
+  const { xs, ys } = grid
+  const cols = xs.length - 1
+  const centre = (l: StyledLine): [number, number] => [(l.box[0] + l.box[2]) / 2, (l.box[1] + l.box[3]) / 2]
+  const rowOf = (l: StyledLine): number => {
+    const y = centre(l)[1]
+    const r = ys.findIndex((top, i) => i < ys.length - 1 && y >= top && y < ys[i + 1]!)
+    return r < 0 ? (y < ys[0]! ? 0 : ys.length - 2) : r
+  }
+  const rows: TableCell[][] = []
+  for (let r = 0; r + 1 < ys.length; r++) {
+    const rowLines = lines.filter((l) => rowOf(l) === r)
+    const rowUnmapped = unmapped.filter((l) => rowOf(l) === r)
+    const crossed = (i: number): boolean => [...rowLines, ...rowUnmapped].some((l) => l.box[0] < xs[i]! - 2 && l.box[2] > xs[i]! + 2)
+    const row: TableCell[] = []
+    for (let c = 0; c < cols; ) {
+      let end = c + 1
+      while (end < cols && !grid.v[r]![end] && crossed(end)) end++
+      const box: Box = [xs[c]!, ys[r]!, xs[end]!, ys[r + 1]!]
+      const inCell = (l: StyledLine): boolean => {
+        const x = centre(l)[0]
+        return (c === 0 || x >= xs[c]!) && (end === cols || x < xs[end]!)
+      }
+      // Inside the cell's rules (a rule is about a point wide), so a crop shows none of them.
+      const inside: Box = [box[0] + 1, box[1] + 1, box[2] - 1, box[3] - 1]
+      const pictures = unreadableAreas(rowUnmapped.filter(inCell))
+        .map((area) => crop(area, inside))
+        .filter((p): p is PictureBlock => p !== null)
+      const first = (rules: Array<StyledGrid['h'][number][number]>): StyledGrid['h'][number][number] => rules.find((x) => x) ?? null
+      row.push({
+        paragraphs: paragraphs(rowLines.filter(inCell), true).map((p) => paragraphBlock(p, options)),
+        pictures,
+        span: end - c,
+        box,
+        borders: { top: first(grid.h[r]!.slice(c, end)), bottom: first(grid.h[r + 1]!.slice(c, end)), left: grid.v[r]![c] ?? null, right: grid.v[r]![end] ?? null },
+        shading: grid.shading[r]![c] ?? null
+      })
+      c = end
+    }
+    rows.push(row)
+  }
+  const text = lines.map((l) => l.text).join(' ')
+  return {
+    kind: 'table',
+    box: grid.box,
+    columns: xs.slice(1).map((x, i) => x - xs[i]!),
+    rowHeights: ys.slice(1).map((y, i) => y - ys[i]!),
+    rows,
+    rtl: arabicCount(text) > latinCount(text),
+    placed: true
+  }
+}
+
+const shapeOf = (d: Drawing): ShapeBlock => ({ kind: 'shape', box: d.box, order: d.call, geometry: d.kind, ops: d.ops, fill: d.fill, stroke: d.stroke, evenOdd: d.evenOdd })
+
 /** Reading order: cut into columns where a gutter runs the whole height, else into bands; recurse. */
 function readingOrder(blocks: Block[], rtl: boolean, pageWidth: number): Block[] {
   if (blocks.length <= 1) return blocks
@@ -450,6 +511,45 @@ function figureRegions(vectors: Box[], grids: Grid[], lines: StyledLine[], width
   return merged
 }
 
+/**
+ * A page for positioned writers (decisions §118): its drawings as shapes, ruled tables with their
+ * rules and fills, art and pictures drawn alone (scene.ts, art.ts); its text above, in paragraphs.
+ */
+function placedPage(doc: PdfDoc, pageIndex: number, width: number, height: number, kept: StyledLine[], unreadableLines: StyledLine[], crop: Crop, options: BuildOptions): PageModel {
+  const found = scene(pageDrawings(doc, pageIndex), [...kept, ...unreadableLines].map((l) => l.box), width, height)
+  let flowing = kept
+  let unmapped = unreadableLines
+  const tables: TableBlock[] = []
+  for (const grid of found.grids) {
+    const inside = (l: StyledLine): boolean => {
+      const cx = (l.box[0] + l.box[2]) / 2
+      const cy = (l.box[1] + l.box[3]) / 2
+      return cx >= grid.box[0] && cx <= grid.box[2] && cy >= grid.box[1] && cy <= grid.box[3]
+    }
+    tables.push(placedTable(grid, flowing.filter(inside), unmapped.filter(inside), crop, options))
+    flowing = flowing.filter((l) => !inside(l))
+    unmapped = unmapped.filter((l) => !inside(l))
+  }
+  const shown = <T,>(p: T | null): p is T => p !== null
+  const drawn: Array<ShapeBlock | PictureBlock> = [
+    ...found.shapes.map(shapeOf),
+    ...found.art.map((a) => artPicture(doc, pageIndex, a)).filter(shown),
+    ...found.images.map((i) => placedPicture(doc, pageIndex, i, width, height)).filter(shown)
+  ].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  // Lines the file maps to nothing (§68), and icons of an icon font (an envelope before an address), as drawn.
+  const crops = unreadableAreas(unmapped)
+    .map((area) => crop(area, [0, 0, width, height]))
+    .filter(shown)
+  for (const icon of kept.flatMap((l) => l.icons ?? [])) {
+    const picture = crop([icon[0] - 0.5, icon[1] - 0.5, icon[2] + 0.5, icon[3] + 0.5], [0, 0, width, height])
+    if (picture) crops.push(picture)
+  }
+  const text = kept.map((l) => l.text).join(' ')
+  const rtl = arabicCount(text) > latinCount(text)
+  const blocks: Block[] = [...paragraphs(flowing, true).flatMap(splitAtMarkers).map((p) => paragraphBlock(p, options)), ...tables, ...crops]
+  return { width, height, rtl, drawn, blocks: readingOrder(blocks, rtl, width) }
+}
+
 /** "Page 3 of 10" → "page # of #": the same running line on every page, whatever its numbers. */
 const runningKey = (text: string): string => foldString(text).replace(/[0-9٠-٩]+/g, '#').replace(/\s+/g, ' ').trim()
 
@@ -489,8 +589,9 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
       }
       kept.push(l)
     }
-    const { pictures, pixels, vectors, segments } = extras(doc, pl.index, !options.art)
     const crop: Crop = (box, clip) => cropPicture(doc, pl.index, box, clip)
+    if (options.art) return placedPage(doc, pl.index, width, height, kept, pl.unreadable, crop, options)
+    const { pictures, vectors, segments } = extras(doc, pl.index, true)
     const grids = findGrids(segments)
     const tables: TableBlock[] = []
     let flowing = kept
@@ -512,10 +613,9 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
     const rtl = arabicCount(text) > latinCount(text)
     const share = (p: PictureBlock): number => ((p.box[2] - p.box[0]) * (p.box[3] - p.box[1])) / (width * height)
     const within = (inner: Box, outer: Box, slack = 1): boolean => inner[0] >= outer[0] - slack && inner[2] <= outer[2] + slack && inner[1] >= outer[1] - slack && inner[3] <= outer[3] + slack
-    const touches = (a: Box, b: Box): boolean => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
     // Charts and logos drawn as vectors, with their labels, as pictures (flowing writers).
     const figures: PictureBlock[] = []
-    if (options.figures && !options.art) {
+    if (options.figures) {
       for (const region of figureRegions(vectors, grids, flowing, width, height)) {
         const picture = regionPicture(doc, pl.index, region)
         if (!picture) continue
@@ -527,38 +627,20 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
     }
     // A picture covering most of a page that has text is a background or a scan under its text.
     const behind = (p: PictureBlock): boolean => share(p) > 0.6 && kept.length > 3
-    let shownPictures: PictureBlock[]
-    let background: PictureBlock | null = null
     // Unreadable lines outside tables (§68): a page all in such a font is a large crop, not a background.
     const unreadableCrops = unreadableAreas(unmapped)
       .map((area) => crop(area, [0, 0, width, height]))
       .filter((p): p is PictureBlock => p !== null)
-    // Placed writers: icons of an icon font (an envelope before an address) the file maps to nothing, as drawn.
-    if (options.art)
-      for (const icon of kept.flatMap((l) => l.icons ?? [])) {
-        const picture = crop([icon[0] - 0.5, icon[1] - 0.5, icon[2] + 0.5, icon[3] + 0.5], [0, 0, width, height])
-        if (picture) unreadableCrops.push(picture)
-      }
-    if (options.art) {
-      // Last, as it changes the document: drawings behind, pictures as drawn (art.ts). A picture over
-      // a background picture stays part of it (taking it out would take the background too).
-      const bigs = pictures.filter(behind)
-      const separate = pictures.map((p, i) => ({ p, pixels: pixels[i] ?? 0 })).filter(({ p }) => !behind(p) && !bigs.some((b) => touches(b.box, p.box)))
-      const art = pageArt(doc, pl.index, width, height, separate.map(({ p, pixels: n }) => ({ box: p.box, pixels: n })))
-      background = art.background
-      shownPictures = [...art.pictures.filter((p): p is PictureBlock => p !== null), ...unreadableCrops]
-    } else {
-      // A long strip along the page's edge (a coloured bar) is decoration: flowing, it took a page of its own.
-      const strip = (p: PictureBlock): boolean => {
-        const [x0, y0, x1, y1] = p.box
-        const edge = x0 < 3 || y0 < 3 || x1 > width - 3 || y1 > height - 3
-        return edge && Math.max(x1 - x0, y1 - y0) > 6 * Math.min(x1 - x0, y1 - y0)
-      }
-      shownPictures = pictures.filter((p) => !tables.some((t) => within(p.box, t.box)) && !behind(p) && !strip(p) && !figures.some((f) => within(p.box, f.box, 2)))
-      shownPictures.push(...unreadableCrops, ...figures)
+    // A long strip along the page's edge (a coloured bar) is decoration: flowing, it took a page of its own.
+    const strip = (p: PictureBlock): boolean => {
+      const [x0, y0, x1, y1] = p.box
+      const edge = x0 < 3 || y0 < 3 || x1 > width - 3 || y1 > height - 3
+      return edge && Math.max(x1 - x0, y1 - y0) > 6 * Math.min(x1 - x0, y1 - y0)
     }
+    const shownPictures = pictures.filter((p) => !tables.some((t) => within(p.box, t.box)) && !behind(p) && !strip(p) && !figures.some((f) => within(p.box, f.box, 2)))
+    shownPictures.push(...unreadableCrops, ...figures)
     const blocks: Block[] = [...paragraphs(flowing, true).flatMap(splitAtMarkers).map((p) => paragraphBlock(p, options)), ...tables, ...shownPictures]
-    return { width, height, rtl, background, blocks: readingOrder(blocks, rtl, width) }
+    return { width, height, rtl, drawn: [], blocks: readingOrder(blocks, rtl, width) }
   })
 
   // Headings: bigger than body text; the biggest sizes are the higher levels.

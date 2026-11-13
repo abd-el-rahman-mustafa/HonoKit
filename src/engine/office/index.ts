@@ -2,6 +2,8 @@ import { PdfError } from '../errors'
 import { free, openPdf } from '../mupdf'
 import { buildModel, type BuildOptions } from './build'
 import { writeDocx } from './docx'
+import type { StyleRun } from '../paragraphs'
+import { learnFallbacks } from './fonts'
 import type { DocModel } from './model'
 import { writeMarkdown, writePlainText } from './plain'
 import { writePptx } from './pptx'
@@ -46,6 +48,12 @@ export function modelOf(bytes: Uint8Array, options: BuildOptions, password?: str
   }
 }
 
+/** Lines as printed, for choosing stand-in fonts by width: a justified paragraph's last line only (the others are stretched). */
+function fontSamples(model: DocModel): Array<{ runs: StyleRun[]; width: number }> {
+  const paragraphs = model.pages.flatMap((p) => p.blocks.flatMap((b) => (b.kind === 'paragraph' ? [b] : b.kind === 'table' ? b.rows.flat().flatMap((c) => c.paragraphs) : [])))
+  return paragraphs.flatMap((b) => (b.alignment === 'justify' ? b.lines.slice(-1) : b.lines).map((l) => ({ runs: l.runs, width: l.box[2] - l.box[0] })))
+}
+
 export async function exportOffice(bytes: Uint8Array, options: ExportOptions, password?: string): Promise<ExportResult> {
   const layout = options.layout ?? 'exact'
   // Writers that place things where they were take the page's drawings (art); flowing ones its charts as pictures.
@@ -67,12 +75,16 @@ export async function exportOffice(bytes: Uint8Array, options: ExportOptions, pa
     pages: model.pages.length,
     paragraphs: blocks.filter((b) => b.kind === 'paragraph').length,
     tables: blocks.filter((b) => b.kind === 'table').length,
-    // Table cells hold pictures too: their lines the file maps to nothing (§68).
-    pictures: blocks.reduce((n, b) => n + (b.kind === 'picture' ? 1 : b.kind === 'table' ? b.rows.flat().reduce((m, c) => m + c.pictures.length, 0) : 0), 0)
+    // Table cells hold pictures too: their lines the file maps to nothing (§68); and positioned writers' drawings.
+    pictures:
+      blocks.reduce((n, b) => n + (b.kind === 'picture' ? 1 : b.kind === 'table' ? b.rows.flat().reduce((m, c) => m + c.pictures.length, 0) : 0), 0) +
+      model.pages.reduce((n, p) => n + p.drawn.filter((d) => d.kind === 'picture').length, 0)
   }
-  if (stats.paragraphs + stats.tables + stats.pictures === 0) {
+  const shapes = model.pages.reduce((n, p) => n + p.drawn.length, 0)
+  if (stats.paragraphs + stats.tables + stats.pictures + shapes === 0) {
     throw new PdfError('unsupported', 'No text or pictures were found. A scanned PDF needs text recognition (OCR) first.')
   }
+  if (options.format === 'docx' || options.format === 'pptx') learnFallbacks(fontSamples(model))
   switch (options.format) {
     case 'docx':
       return { bytes: await writeDocx(model, { layout, pageBreaks: options.pageBreaks }), extra: [], ...stats }

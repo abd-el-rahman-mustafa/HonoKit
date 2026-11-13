@@ -6,6 +6,8 @@ import { exportOffice, modelOf } from '@engine/office'
 import type { ParagraphBlock } from '@engine/office/model'
 import { fromDingbats } from '@engine/dingbats'
 import { mupdf } from '@engine/mupdf'
+import { seatClusters, type Glyph } from '@engine/paragraphs'
+import { clustersOf, joinPieces, readingOrder } from '@engine/readorder'
 
 /**
  * Word "keep the look" and PowerPoint against what real files showed (2026-11-13): pictures
@@ -28,16 +30,49 @@ function chromeLikePdf(): Uint8Array {
   const body = 'abc'.repeat(14)
   const content = ['BT /F2 16 Tf 20 250 Td (abcabcabc) Tj ET', ...[0, 1, 2].map((i) => `BT /F1 10 Tf 20 ${210 - i * 14} Td (${body}) Tj ET`)].join('\n')
   const glyph = (stem: number): string => `600 0 0 0 600 700 d1 0 0 ${stem} 700 re f`
-  const objects = [
+  return pdfOf([
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 300] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>',
     type3(60, 7),
     type3(220, 8),
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    `<< /Length ${glyph(60).length} >>\nstream\n${glyph(60)}\nendstream`,
-    `<< /Length ${glyph(220).length} >>\nstream\n${glyph(220)}\nendstream`
-  ]
+    stream(content),
+    stream(glyph(60)),
+    stream(glyph(220))
+  ])
+}
+
+const stream = (s: string): string => `<< /Length ${s.length} >>\nstream\n${s}\nendstream`
+
+/**
+ * A glyph as MuPDF reads Chrome's Arabic: its letter, where it starts and its width — 0 for a
+ * cluster's letters and marks, which come at the cluster's start, the mark first.
+ */
+const glyph = (cp: number, x: number, width: number): Glyph => ({
+  c: String.fromCodePoint(cp),
+  width,
+  box: [x, 91, x + width, 103],
+  origin: [x, 100],
+  family: 'Segoe UI',
+  font: 'SegoeUI',
+  size: 9,
+  colour: [0, 0, 0],
+  bold: false,
+  italic: false,
+  kind: 'sans'
+})
+
+/** The pieces' text in reading order, clusters seated first (as styledLines reads them). */
+function readPieces(pieces: Glyph[][]): string {
+  const ps = pieces.map((glyphs) => ({ glyphs }))
+  seatClusters(ps)
+  return joinPieces(ps.map((p) => p.glyphs))
+    .map((line) => readingOrder(clustersOf(line)).glyphs.map((g) => g.c).join(''))
+    .join('|')
+}
+
+/** A PDF of these objects (1 0 R the catalog). */
+function pdfOf(objects: string[]): Uint8Array {
   let pdf = '%PDF-1.7\n'
   const offsets: number[] = []
   objects.forEach((o, i) => {
@@ -58,6 +93,28 @@ describe('PDF to Office: keeping the look', () => {
     expect(fromDingbats(String.fromCharCode(0xac))).toBe(String.fromCodePoint(0x2460))
     expect(fromDingbats(' ')).toBe(' ')
     expect(fromDingbats(String.fromCodePoint(0x25c6))).toBe(String.fromCodePoint(0x25c6))
+  })
+
+  it("seats Chrome's Arabic clusters: each letter before its mark, in its place, no space inside a word", () => {
+    // Positions as MuPDF read them from a Chrome-printed credit note (9 pt Segoe UI).
+    const ar = (...cps: number[]): string => String.fromCodePoint(...cps)
+    // "لم تُنقل": the cluster starts 1 pt past the nun before it — the gap read as a word space ("تُ نقل").
+    const left = [glyph(0x644, 296.5, 6), glyph(0x642, 302.5, 4.5), glyph(0x646, 307, 3)]
+    const right = [glyph(0x20, 313, 2.5), glyph(0x645, 315.5, 5.3), glyph(0x644, 320.8, 3)]
+    expect(readPieces([left, [glyph(0x64f, 311, 0), glyph(0x62a, 311, 0)], right])).toBe(ar(0x644, 0x645, 0x20, 0x62a, 0x64f, 0x646, 0x642, 0x644))
+    // "أُعيد إلى": the cluster is the line's right end, nothing after it ("ُعأيد").
+    const end = [glyph(0x649, 258.6, 7.5), glyph(0x644, 266.1, 3), glyph(0x625, 269.1, 2.3), glyph(0x20, 271.4, 2.5), glyph(0x62f, 273.8, 4.5), glyph(0x64a, 278.3, 3), glyph(0x639, 281.3, 5.3)]
+    expect(readPieces([end, [glyph(0x64f, 286.9, 0), glyph(0x623, 286.9, 0)]])).toBe(ar(0x623, 0x64f, 0x639, 0x64a, 0x62f, 0x20, 0x625, 0x644, 0x649))
+    // "عادةً": the cluster's width is a false space at its start, which goes.
+    const cluster = [glyph(0x64b, 387.9, 0), glyph(0x629, 387.9, 0)]
+    expect(readPieces([cluster, [glyph(0x62f, 391.4, 4.1), glyph(0x20, 387.9, 3.5)], [glyph(0x627, 395.5, 2.1)], [glyph(0x639, 397.6, 4.8)]])).toBe(ar(0x639, 0x627, 0x62f, 0x629, 0x64b))
+    // A ligature's last letter at zero width where a real space starts ("في" in a font with that
+    // ligature) is no cluster: the space stays ("الشركةيف").
+    const yeh = glyph(0x64a, 397.4, 0)
+    const ligature = [{ glyphs: [glyph(0x629, 400.7, 6.7), glyph(0x20, 397.4, 3.3), yeh, glyph(0x641, 387.3, 10.2)] }]
+    seatClusters(ligature)
+    expect(ligature[0]!.glyphs.map((g) => g.c).join('')).toBe(ar(0x629, 0x20, 0x64a, 0x641))
+    expect(yeh.width).toBe(0)
   })
 
   it('finds bold in Type 3 fonts from their ink', () => {
@@ -85,16 +142,21 @@ describe('PDF to Office: keeping the look', () => {
     expect(heights[0]!).toBeLessThan(heights[1]!)
   })
 
-  it('writes PowerPoint lines on their printed baselines and valid paragraphs', async () => {
+  it('writes a PowerPoint paragraph as one wrapping box at its pitch, with valid paragraphs', async () => {
     const pdf = await PDFDocument.create()
     const page = pdf.addPage([400, 300])
     const font = await pdf.embedFont(StandardFonts.Helvetica)
-    // A 11.5 pt pitch: PowerPoint draws exact spacing in whole points.
+    // A 11.5 pt pitch: spacing as a share of the size (spcPct), which PowerPoint keeps to the hundredth.
     const lines = ['The first line of a paragraph runs', 'on to a second line and then a', 'third one, a fourth one after it,', 'and a fifth one ends it here now.']
     lines.forEach((l, i) => page.drawText(l, { x: 40, y: 250 - i * 11.5, size: 10, font, color: rgb(0, 0, 0) }))
     const xml = await slide((await exportOffice(new Uint8Array(await pdf.save()), { ...BASE, format: 'pptx' })).bytes)
-    expect(xml).toContain('<a:lnSpc><a:spcPts val="1100"/></a:lnSpc>')
-    expect(xml).toMatch(/<a:spcBef><a:spcPts val="100"\/><\/a:spcBef>/)
+    // One text box that wraps (an edit re-flows it), its lines one paragraph, 11.5 / (1.2 × 10).
+    expect(xml.match(/<p:sp>/g)).toHaveLength(1)
+    expect(xml).toContain('wrap="square"')
+    expect(xml.match(/<a:p>/g)).toHaveLength(1)
+    expect(xml).toContain('<a:spcPct val="95833"/>')
+    // Placed at the left edge where it was printed (40 pt).
+    expect(xml).toContain('<a:off x="508000"')
     // One paragraph-properties element per paragraph, first (pptxgenjs wrote one per run).
     for (const p of xml.match(/<a:p>[\s\S]*?<\/a:p>/g) ?? []) {
       expect((p.match(/<a:pPr\b/g) ?? []).length).toBeLessThanOrEqual(1)
@@ -165,7 +227,8 @@ describe('PDF to Office: keeping the look', () => {
     const pixmap = image.toPixmap()
     try {
       const px = pixmap.getPixels()
-      const n = pixmap.getNumberOfComponents() + (pixmap.getAlpha() ? 1 : 0)
+      // MuPDF's count of components already includes alpha.
+      const n = pixmap.getNumberOfComponents()
       // The left half was transparent: white, not black.
       const left = (Math.floor(pixmap.getHeight() / 2) * pixmap.getWidth() + 2) * n
       expect(px[left]! + px[left + 1]! + px[left + 2]!).toBeGreaterThan(740)
