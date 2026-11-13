@@ -77,8 +77,8 @@ describe('PDF to Office: the model', () => {
 })
 
 describe('PDF to Office: the files', () => {
-  it('writes Word with right-to-left paragraphs, a table, a picture and a page-number footer', async () => {
-    const r = await exportOffice(await makeReport(), { ...BASE, format: 'docx' })
+  it('writes flowing Word with right-to-left paragraphs, a table, a picture and a page-number footer', async () => {
+    const r = await exportOffice(await makeReport(), { ...BASE, format: 'docx', layout: 'flow' })
     const zip = await JSZip.loadAsync(r.bytes)
     const xml = await zip.file('word/document.xml')!.async('string')
     expect(xml).toContain('Annual Report')
@@ -94,6 +94,26 @@ describe('PDF to Office: the files', () => {
     expect(r.tables).toBe(1)
   })
 
+  it('writes Word that keeps the look: a page per page, its drawings behind, text in frames where it was', async () => {
+    const r = await exportOffice(await makeReport(), { ...BASE, format: 'docx' })
+    const xml = await (await JSZip.loadAsync(r.bytes)).file('word/document.xml')!.async('string')
+    // A section per PDF page, of the page's size.
+    expect(xml.match(/<w:sectPr/g)).toHaveLength(2)
+    expect(xml).toContain('w:w="11900" w:h="16840"')
+    // The table's rules and the picture are drawn: the page's drawings behind the text, the picture floating.
+    expect(xml.match(/behindDoc="1"/g)!.length).toBeGreaterThanOrEqual(2)
+    expect(xml).toContain('<wp:positionH relativeFrom="page">')
+    // Text is in frames at its place, as printed; the Arabic line right to left with its own font slot.
+    expect(xml).toContain('<w:framePr')
+    expect(xml).toContain('Annual Report')
+    expect(xml).toContain('Region')
+    expect(xml).toContain('<w:bidi/>')
+    expect(xml).toContain('تقرير سنوي')
+    // The running footer stays on each page where it was (no Word footer).
+    expect(xml).toContain('Page 1 of 2')
+    expect(xml).not.toContain('<w:tbl>')
+  })
+
   it('writes PowerPoint with a slide per page', async () => {
     const r = await exportOffice(await makeReport(), { ...BASE, format: 'pptx' })
     const zip = await JSZip.loadAsync(r.bytes)
@@ -102,7 +122,16 @@ describe('PDF to Office: the files', () => {
     const one = await zip.file('ppt/slides/slide1.xml')!.async('string')
     expect(one).toContain('Annual Report')
     expect(one).toContain('rtl="1"')
-    expect(one).toContain('<a:tbl>')
+    // The page's drawings (the table's rules) are the slide's background; the table's words are text over them.
+    expect(one).toMatch(/<p:bg>[\s\S]*<a:blip r:embed=/)
+    expect(one).toContain('Region')
+    expect(one).not.toContain('<a:tbl>')
+    // Lines are kept as printed: no wrapping anew, no shrinking.
+    expect(one).toContain('wrap="none"')
+    // Each script its own font, and no Chinese code-page charsets (Office substituted a Chinese font).
+    expect(one).not.toMatch(/charset="-12/)
+    expect(one).not.toContain('|')
+    expect(one).toContain('<a:latin typeface="Arial"/>')
   })
 
   it('writes Markdown with a heading, a list, a table and the picture beside it', async () => {
@@ -208,8 +237,8 @@ describe('PDF to Office: text the file maps to nothing (§68)', () => {
 
   it('writes no U+FFFD into PowerPoint, Word, Markdown, text or Excel', async () => {
     const bytes = await makeUnmapped()
-    for (const format of ['pptx', 'docx', 'md', 'txt', 'xlsx'] as const) {
-      const r = await exportOffice(bytes, { ...BASE, format })
+    for (const format of ['pptx', 'docx', 'flow', 'md', 'txt', 'xlsx'] as const) {
+      const r = await exportOffice(bytes, { ...BASE, format: format === 'flow' ? 'docx' : format, layout: format === 'flow' ? 'flow' : 'exact' })
       let all = ''
       if (format === 'md' || format === 'txt') all = new TextDecoder().decode(r.bytes)
       else {
@@ -269,8 +298,8 @@ describe('PDF to Office: text the file maps to nothing (§68)', () => {
     expect(model.pages[0]!.blocks.filter((b) => b.kind === 'picture')).toHaveLength(0)
 
     const files: Record<string, string> = {}
-    for (const format of ['pptx', 'docx', 'md', 'txt', 'xlsx'] as const) {
-      const r = await exportOffice(bytes, { ...BASE, format })
+    for (const format of ['pptx', 'docx', 'flow', 'md', 'txt', 'xlsx'] as const) {
+      const r = await exportOffice(bytes, { ...BASE, format: format === 'flow' ? 'docx' : format, layout: format === 'flow' ? 'flow' : 'exact' })
       let all = ''
       if (format === 'md' || format === 'txt') all = new TextDecoder().decode(r.bytes)
       else {
@@ -282,12 +311,10 @@ describe('PDF to Office: text the file maps to nothing (§68)', () => {
       if (format !== 'xlsx' && format !== 'txt') expect(r.pictures, format).toBe(2)
       files[format] = all
     }
-    // Word: the pictures are inside the table; PowerPoint: over it; Markdown: in the cells.
-    const tbl = files.docx!.slice(files.docx!.indexOf('<w:tbl>'), files.docx!.indexOf('</w:tbl>'))
+    // Flowing Word: pictures inside the table; PowerPoint and Word keeping the look: where they were; Markdown: in the cells.
+    const tbl = files.flow!.slice(files.flow!.indexOf("<w:tbl>"), files.flow!.indexOf("</w:tbl>"))
     expect(tbl.match(/<w:drawing>/g)).toHaveLength(2)
     expect(files.pptx!.match(/<p:pic>/g)).toHaveLength(2)
-    // The slide's rows keep the PDF's 25 pt, so the pictures over the table stay in their cells.
-    expect(files.pptx!.match(/<a:tr h="(\d+)"/g)!.map((m) => Math.round(Number(m.match(/\d+/)![0]) / 12700))).toEqual([25, 25, 25])
     expect(files.md).toContain('| ![](pictures/page1-1.png) | 2.85 |')
   })
 

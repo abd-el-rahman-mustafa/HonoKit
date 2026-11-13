@@ -69,8 +69,8 @@ export function writeMarkdown(model: DocModel, pictureFolder: string, rtlDivs: b
   model.pages.forEach((page, pi) => {
     let k = 0
     const picture = (p: PictureBlock): string => {
-      const name = `page${pi + 1}-${++k}.png`
-      pictures.push({ name, bytes: p.png })
+      const name = `page${pi + 1}-${++k}.${p.type}`
+      pictures.push({ name, bytes: p.data })
       return `![](${encodeURI(`${pictureFolder}/${name}`)})`
     }
     for (const b of page.blocks) {

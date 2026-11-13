@@ -9,10 +9,22 @@ import type { Alignment, StyleRun } from '../paragraphs'
 
 export type Box = [number, number, number, number]
 
+/** One printed line of a paragraph, for writers that place text where it was (PowerPoint, Word "keep the look"). */
+export interface LineBlock {
+  /** The line's text; a bullet before it is in `marker`, and `box` is then the text's own. */
+  runs: StyleRun[]
+  box: Box
+  baseline: number
+  /** A bullet printed apart from its text: drawn at its own place, so the text starts where it did. */
+  marker?: { runs: StyleRun[]; box: Box }
+}
+
 export interface ParagraphBlock {
   kind: 'paragraph'
   box: Box
   runs: StyleRun[]
+  /** The same text line by line, as printed (a hyphen at a line end kept). */
+  lines: LineBlock[]
   rtl: boolean
   alignment: Alignment
   /** 1–3 for headings (by size across the document), 0 for body text. */
@@ -30,7 +42,8 @@ export interface ParagraphBlock {
 export interface PictureBlock {
   kind: 'picture'
   box: Box
-  png: Uint8Array
+  data: Uint8Array
+  type: 'png' | 'jpg'
   /** Pixels of the picture itself. */
   width: number
   height: number
@@ -63,6 +76,8 @@ export interface PageModel {
   blocks: Block[]
   /** Mostly Arabic: columns are read right to left, and the page is an RTL page. */
   rtl: boolean
+  /** The page's drawings without text or pictures (built with `art`), to lie behind everything. */
+  background: PictureBlock | null
 }
 
 export interface DocModel {

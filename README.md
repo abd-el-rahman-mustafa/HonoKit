@@ -63,8 +63,9 @@ more); the author's restrictions are respected.
 **Organize.** Merge, split, reorder, rotate, insert, extract, replace, duplicate and delete pages;
 crop and trim margins; compress; compare two PDFs word by word.
 
-**Convert.** PDF to Word, Excel, PowerPoint, Markdown and pictures; Word, Excel, PowerPoint, web
-pages and pictures to PDF — without Office.
+**Convert.** PDF to Word, Excel, PowerPoint, Markdown and pictures — Word and PowerPoint keep each
+page's look (its drawings behind editable text), or Word gives flowing text; Word, Excel,
+PowerPoint, web pages and pictures to PDF — without Office.
 
 **OCR & scan.** Recognize text in scanned pages (Arabic and English) to make them searchable;
 scan from a scanner, scan ID cards and books; picture to text, Word or Excel.

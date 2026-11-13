@@ -494,7 +494,7 @@ export class Sessions {
 
   // --- export to Office -------------------------------------------------------------
 
-  async exportOffice(id: string, options: { format: OfficeFormat; pages: number[] | null; pageBreaks: boolean; removeTatweel: boolean; digits: 'keep' | 'western' | 'arabic'; sheets?: 'page' | 'tables' }, path: string): Promise<{ path: string; pages: number; paragraphs: number; tables: number; pictures: number }> {
+  async exportOffice(id: string, options: { format: OfficeFormat; pages: number[] | null; pageBreaks: boolean; layout?: 'exact' | 'flow'; removeTatweel: boolean; digits: 'keep' | 'western' | 'arabic'; sheets?: 'page' | 'tables' }, path: string): Promise<{ path: string; pages: number; paragraphs: number; tables: number; pictures: number }> {
     const s = this.get(id)
     assertCanCopy(rightsOf(s.doc))
     const folder = `${basename(path, extname(path))}_pictures`

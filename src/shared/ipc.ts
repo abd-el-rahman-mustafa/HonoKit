@@ -199,7 +199,7 @@ export type BatchStep =
   | { kind: 'pageNumbers'; template: string }
   | { kind: 'rotate'; angle: 90 | 180 | 270 }
   | { kind: 'protect'; password: string }
-  | { kind: 'convert'; format: 'docx' | 'xlsx' | 'pptx' | 'md' | 'txt' }
+  | { kind: 'convert'; format: 'docx' | 'xlsx' | 'pptx' | 'md' | 'txt'; layout?: 'exact' | 'flow' }
 
 /** A workflow kept for reuse (passwords are never kept). */
 export interface SavedWorkflow {
@@ -519,7 +519,7 @@ export interface PowerApi {
   /** Asks where to save a converted file; the extension follows the format. */
   pickExportPath(suggestedName: string, format: 'docx' | 'pptx' | 'xlsx' | 'md' | 'txt'): Promise<string | null>
   /** PDF → Word / PowerPoint / Markdown / text, written to `path` (Markdown's pictures in a folder beside it). */
-  exportOffice(id: string, options: { format: 'docx' | 'pptx' | 'xlsx' | 'md' | 'txt'; pages: number[] | null; pageBreaks: boolean; removeTatweel: boolean; digits: 'keep' | 'western' | 'arabic'; sheets?: 'page' | 'tables' }, path: string): Promise<Result<{ path: string; pages: number; paragraphs: number; tables: number; pictures: number }>>
+  exportOffice(id: string, options: { format: 'docx' | 'pptx' | 'xlsx' | 'md' | 'txt'; pages: number[] | null; pageBreaks: boolean; layout?: 'exact' | 'flow'; removeTatweel: boolean; digits: 'keep' | 'western' | 'arabic'; sheets?: 'page' | 'tables' }, path: string): Promise<Result<{ path: string; pages: number; paragraphs: number; tables: number; pictures: number }>>
   /** Opens a file this session converted, in the app Windows uses for it. */
   openConverted(path: string): Promise<void>
   /** Compares two documents or texts word by word. */

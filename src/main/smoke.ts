@@ -1,5 +1,5 @@
 import { app, type BrowserWindow } from 'electron'
-import { mkdirSync, writeFileSync, existsSync, statSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, statSync, rmSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -895,13 +895,27 @@ export async function runSmoke(window: BrowserWindow, openFiles: (paths: string[
       if (await clickIn('[data-global-bar]', labels.convert ?? 'Convert')) {
         await wait(800)
         await shot('28-convert')
-        for (const format of ['docx', 'xlsx', 'pptx', 'md']) {
-          await js(`document.querySelectorAll('[data-convert-formats] button[role=radio]')[${['docx', 'xlsx', 'pptx', 'md', 'txt'].indexOf(format)}]?.click()`)
+        for (const format of ['docx', 'docx flow', 'xlsx', 'pptx', 'md']) {
+          const kind = format.split(' ')[0]!
+          await js(`document.querySelectorAll('[data-convert-formats] button[role=radio]')[${['docx', 'xlsx', 'pptx', 'md', 'txt'].indexOf(kind)}]?.click()`)
           await wait(200)
+          if (format === 'docx flow') {
+            // Word's second layout (§117): the Layout list open, then "Flowing text". The first
+            // file (keep the look) is moved aside so both are counted.
+            if (existsSync(join(out, 'sample.docx'))) renameSync(join(out, 'sample.docx'), join(out, 'sample-exact.docx'))
+            await js("document.querySelector('[data-tool-panel] button[aria-haspopup=listbox]')?.click()")
+            await wait(300)
+            await shot('28b-convert-layout')
+            await js("document.querySelectorAll('[data-select-list] [role=option]')[1]?.click()")
+            await wait(300)
+          }
           await js("document.querySelector('[data-tool-footer] button.bg-accent')?.click()")
           await wait(4000)
-          const file = join(out, `sample.${format}`)
-          steps.push(`convert ${format}: ${existsSync(file) ? `${statSync(file).size} bytes` : 'missing'}`)
+          const file = join(out, `sample.${kind}`)
+          const exact = join(out, 'sample-exact.docx')
+          // The flowing file has no frames or page backgrounds: far smaller than the exact one.
+          const differs = format === 'docx flow' && existsSync(file) && existsSync(exact) ? `, ${Math.abs(statSync(file).size - statSync(exact).size) > 1000 ? 'differs from' : 'SAME AS'} keep-the-look` : ''
+          steps.push(`convert ${format}: ${existsSync(file) ? `${statSync(file).size} bytes${differs}` : 'missing'}`)
         }
         await js("document.querySelector('[data-tool-footer] button')?.click()")
         await wait(300)

@@ -1,6 +1,8 @@
 import { detectDirection } from './bidi'
-import { free, type mupdf, type PdfDoc } from './mupdf'
-import { repairLigatureOrder } from './text'
+import { fromDingbats, isDingbatsFont } from './dingbats'
+import { free, mupdf, type PdfDoc } from './mupdf'
+import { repairLigatureOrder, UNMAPPED } from './text'
+import { clustersOf, joinPieces, readingOrder, splitAtGaps } from './readorder'
 
 /**
  * Lines of text with their style, and the paragraphs they form.
@@ -29,6 +31,8 @@ export interface StyleRun {
   family: string
   /** The font exactly as named in the file, subset tag included ("USSIZV+EuclidFlex"): one font object. */
   font: string
+  /** Space added between letters for effect, in points (lines read with `reading`). */
+  tracking?: number
 }
 
 export interface StyledLine {
@@ -53,6 +57,10 @@ export interface StyledLine {
    * words. Such lines are never joined into a flowing paragraph.
    */
   tabular: boolean
+  /** Boxes of letters the file maps to nothing (U+FFFD): icons of an icon font, in a readable line. */
+  icons?: Box[]
+  /** A bullet joined to its text (joinBullets): its own runs and box, and the text's box without it. */
+  marker?: { runs: StyleRun[]; box: Box; textBox: Box }
 }
 
 export type Alignment = 'start' | 'end' | 'centre' | 'justify'
@@ -111,11 +119,22 @@ function mostCommon<T>(values: T[], key: (v: T) => string): T {
   return [...counts.values()].sort((a, b) => b.n - a.n)[0]!.v
 }
 
+export interface LineOptions {
+  /**
+   * Letters in reading order from their places on the page (readorder.ts): pieces of one line
+   * joined, mixed Arabic and Latin text in logical order, letter-spaced words without the spaces
+   * MuPDF put between their letters, symbol bullets as bullets. For conversion to Office; the
+   * editor keeps MuPDF's own order, which its glyph positions follow.
+   */
+  reading?: boolean
+}
+
 /** Every line of text on a page, with its style. Lines that are only spaces are left out. */
-export function styledLines(doc: PdfDoc, pageIndex: number): StyledLine[] {
+export function styledLines(doc: PdfDoc, pageIndex: number, options: LineOptions = {}): StyledLine[] {
   const page = doc.loadPage(pageIndex)
   const stext = page.toStructuredText('preserve-whitespace')
   const out: StyledLine[] = []
+  const pieces: Array<{ glyphs: Glyph[]; horizontal: boolean }> = []
   let glyphs: Glyph[] = []
   let horizontal = true
   try {
@@ -129,7 +148,8 @@ export function styledLines(doc: PdfDoc, pageIndex: number): StyledLine[] {
         const ys = [quad[1], quad[3], quad[5], quad[7]]
         const name = font.getName()
         glyphs.push({
-          c,
+          // Reading: a Zapf Dingbats letter is the symbol it draws (dingbats.ts).
+          c: options.reading && isDingbatsFont(name) ? fromDingbats(c) : c,
           width: Math.max(...xs) - Math.min(...xs),
           box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
           origin: [origin[0], origin[1]],
@@ -146,51 +166,133 @@ export function styledLines(doc: PdfDoc, pageIndex: number): StyledLine[] {
       endLine() {
         const kept = glyphs.filter((g) => !invisible(g))
         repairLigatureOrder(kept)
-        const printed = kept.filter((g) => g.c.trim() !== '')
-        if (printed.length === 0) return
-        const text = kept.map((g) => g.c).join('').replace(/\s+/g, ' ').trim()
-        // Symbol-font bullets and the like are part of the line but not its style.
-        const letters = printed.filter((g) => /\p{L}|\p{N}/u.test(g.c))
-        const body = letters.length ? letters : printed
-        const style = mostCommon(body, (g) => `${Math.round(g.size * 2)}|${g.bold}|${g.italic}|${g.kind}|${g.colour.map((v) => v.toFixed(2)).join(',')}`)
-        const rtl = detectDirection(text) === 'rtl'
-        // A jump between neighbouring glyphs much wider than a space: a tab stop or a table column.
-        // Justified text spreads *every* word gap alike, so only a gap far wider than the line's
-        // other word gaps counts (a narrow justified column is not a table).
-        const byX = [...kept].filter((g) => g.c.trim() !== '').sort((a, b) => a.box[0] - b.box[0])
-        const gaps: number[] = []
-        for (let i = 1; i < byX.length; i++) {
-          const gap = byX[i]!.box[0] - byX[i - 1]!.box[2]
-          if (gap > style.size * 0.15) gaps.push(gap)
-        }
-        gaps.sort((a, b) => a - b)
-        const widestGap = gaps[gaps.length - 1] ?? 0
-        const typicalGap = gaps.length > 1 ? gaps[Math.floor((gaps.length - 1) / 2)]! : 0
-        const tabStop = widestGap > style.size * 1.6 && (gaps.length < 2 || widestGap > typicalGap * 2.5)
-        const tabular = /(\.\s?){4,}|…{2,}|_{4,}|(·\s?){3,}/.test(text) || tabStop
-        const box: Box = [Math.min(...printed.map((g) => g.box[0])), Math.min(...printed.map((g) => g.box[1])), Math.max(...printed.map((g) => g.box[2])), Math.max(...printed.map((g) => g.box[3]))]
-        out.push({
-          text,
-          runs: runsOf(kept),
-          box,
-          baseline: style.origin[1],
-          start: rtl ? box[2] : box[0],
-          rtl,
-          size: style.size,
-          colour: style.colour,
-          bold: style.bold,
-          italic: style.italic,
-          kind: style.kind,
-          horizontal,
-          mixed: body.some((g) => g.bold !== style.bold || g.italic !== style.italic || Math.abs(g.size - style.size) > 0.6),
-          tabular
-        })
+        pieces.push({ glyphs: kept, horizontal })
       }
     })
+    if (options.reading) weighType3(page, pieces.flatMap((p) => p.glyphs))
   } finally {
     free(stext, page)
   }
+  if (options.reading) {
+    const across = joinPieces(pieces.filter((p) => p.horizontal).map((p) => p.glyphs))
+    for (const line of across.flatMap(splitAtGaps)) {
+      // Clusters are taken per MuPDF piece order inside the joined line, which keeps marks with their letters.
+      const ordered = readingOrder(clustersOf(line))
+      const built = lineOf(ordered.glyphs, true, ordered.rtl)
+      if (built) out.push(ordered.tracking > 0 ? { ...built, runs: built.runs.map((r) => ({ ...r, tracking: ordered.tracking })) } : built)
+    }
+    for (const p of pieces.filter((p) => !p.horizontal)) {
+      const built = lineOf(p.glyphs, false)
+      if (built) out.push(built)
+    }
+  } else {
+    for (const p of pieces) {
+      const built = lineOf(p.glyphs, p.horizontal)
+      if (built) out.push(built)
+    }
+  }
   return joinBullets(withoutOverprints(out.map(realSymbols)))
+}
+
+/**
+ * Type 3 fonts (how Chrome prints some web fonts) have no weight in their names ("Type3 (6 0 R)"),
+ * so a runbook's bold title and headings came out regular. Their weight is read from the ink: on
+ * the page as drawn, the share of each letter's box its strokes darken (against the box's own
+ * background and the letter's colour). Measured on real files, bold letters lay down 1.6 to 2
+ * times the ink of the page's main font, semibold about 1.4 times, italic the same.
+ */
+function weighType3(page: mupdf.Page, glyphs: Glyph[]): void {
+  const lum = (g: Glyph): number => 0.3 * g.colour[0] + 0.59 * g.colour[1] + 0.11 * g.colour[2]
+  const type3 = glyphs.filter((g) => g.font.startsWith('Type3') && g.c.trim() !== '' && !g.bold && lum(g) < 0.6)
+  if (type3.length < 20) return
+  const scale = 2
+  let pixmap: mupdf.Pixmap | null = null
+  const fonts = new Map<string, { ink: number; n: number }>()
+  try {
+    pixmap = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceGray, false)
+    const px = pixmap.getPixels()
+    const w = pixmap.getWidth()
+    const h = pixmap.getHeight()
+    for (const g of type3) {
+      const x0 = Math.max(0, Math.floor(g.box[0] * scale))
+      const x1 = Math.min(w, Math.ceil(g.box[2] * scale))
+      const y0 = Math.max(0, Math.floor(g.box[1] * scale))
+      const y1 = Math.min(h, Math.ceil(g.box[3] * scale))
+      if (x1 - x0 < 2 || y1 - y0 < 2) continue
+      let background = 0
+      let sum = 0
+      for (let y = y0; y < y1; y++)
+        for (let x = x0; x < x1; x++) {
+          const v = px[y * w + x]!
+          if (v > background) background = v
+          sum += v
+        }
+      const area = (x1 - x0) * (y1 - y0)
+      const contrast = background - lum(g) * 255
+      if (contrast < 60) continue
+      const e = fonts.get(g.font) ?? { ink: 0, n: 0 }
+      e.ink += (background * area - sum) / area / contrast
+      e.n++
+      fonts.set(g.font, e)
+    }
+  } catch {
+    return
+  } finally {
+    free(pixmap)
+  }
+  // The font with the most letters is the body text, taken as regular.
+  const body = [...fonts.values()].sort((a, b) => b.n - a.n)[0]
+  if (!body || body.n < 40) return
+  const heavy = new Set([...fonts].filter(([, e]) => e.n >= 3 && e.ink / e.n >= (body.ink / body.n) * 1.35).map(([name]) => name))
+  for (const g of glyphs) if (heavy.has(g.font)) g.bold = true
+}
+
+/** One line from its glyphs in text order; null for a line of spaces. `rtl` overrides the direction found from the text. */
+function lineOf(kept: Glyph[], horizontal: boolean, rtlGiven?: boolean): StyledLine | null {
+  const printed = kept.filter((g) => g.c.trim() !== '')
+  if (printed.length === 0) return null
+  const text = kept.map((g) => g.c).join('').replace(/\s+/g, ' ').trim()
+  // Symbol-font bullets and the like are part of the line but not its style.
+  const letters = printed.filter((g) => /\p{L}|\p{N}/u.test(g.c))
+  const body = letters.length ? letters : printed
+  const style = mostCommon(body, (g) => `${Math.round(g.size * 2)}|${g.bold}|${g.italic}|${g.kind}|${g.colour.map((v) => v.toFixed(2)).join(',')}`)
+  const rtl = rtlGiven ?? detectDirection(text) === 'rtl'
+  // A jump between neighbouring glyphs much wider than a space: a tab stop or a table column.
+  // Justified text spreads *every* word gap alike, so only a gap far wider than the line's
+  // other word gaps counts (a narrow justified column is not a table).
+  const byX = [...kept].filter((g) => g.c.trim() !== '').sort((a, b) => a.box[0] - b.box[0])
+  const gaps: number[] = []
+  for (let i = 1; i < byX.length; i++) {
+    const gap = byX[i]!.box[0] - byX[i - 1]!.box[2]
+    if (gap > style.size * 0.15) gaps.push(gap)
+  }
+  gaps.sort((a, b) => a - b)
+  const widestGap = gaps[gaps.length - 1] ?? 0
+  const typicalGap = gaps.length > 1 ? gaps[Math.floor((gaps.length - 1) / 2)]! : 0
+  const tabStop = widestGap > style.size * 1.6 && (gaps.length < 2 || widestGap > typicalGap * 2.5)
+  const tabular = /(\.\s?){4,}|…{2,}|_{4,}|(·\s?){3,}/.test(text) || tabStop
+  // Lone letters the file maps to nothing (icons: an envelope before an address) are drawn apart
+  // (office/build.ts): the line's box is its text's. A line mostly of them keeps its whole box (§68).
+  const icons = printed.filter((g, i) => g.c === UNMAPPED && printed[i - 1]?.c !== UNMAPPED && printed[i + 1]?.c !== UNMAPPED).map((g) => g.box)
+  const inked = icons.length && icons.length * 3 <= printed.length ? printed.filter((g) => g.c !== UNMAPPED) : printed
+  const box: Box = [Math.min(...inked.map((g) => g.box[0])), Math.min(...inked.map((g) => g.box[1])), Math.max(...inked.map((g) => g.box[2])), Math.max(...inked.map((g) => g.box[3]))]
+  return {
+    ...(icons.length ? { icons } : {}),
+    text,
+    runs: runsOf(kept),
+    box,
+    baseline: style.origin[1],
+    start: rtl ? box[2] : box[0],
+    rtl,
+    size: style.size,
+    colour: style.colour,
+    bold: style.bold,
+    italic: style.italic,
+    kind: style.kind,
+    horizontal,
+    mixed: body.some((g) => g.bold !== style.bold || g.italic !== style.italic || Math.abs(g.size - style.size) > 0.6),
+    tabular
+  }
 }
 
 /** "ABCDEF+Arial-BoldMT", "IBMPlexSansArabic-Regular-9538" → "Arial", "IBMPlexSansArabic". */
@@ -223,7 +325,7 @@ function runsOf(glyphs: Glyph[]): StyleRun[] {
   return runs
 }
 
-const MARKER_ONLY = /^([•▪◦‣●○■□·\-–*]|\d{1,3}[.)])$/u
+const MARKER_ONLY = /^([•▪◦‣●○■□·\-–*❑❖➢➔✓]|\d{1,3}[.)])$/u
 
 /**
  * A bullet drawn as its own piece of text comes back from MuPDF as a line of its own.
@@ -244,6 +346,7 @@ function joinBullets(lines: StyledLine[]): StyledLine[] {
     )
     if (!text) continue
     gone.add(marker)
+    text.marker = { runs: marker.runs.map((r) => ({ ...r })), box: [...marker.box], textBox: [...text.box] }
     text.text = `${marker.text} ${text.text}`
     text.runs = [...marker.runs.map((r) => ({ ...r, text: `${r.text} ` })), ...text.runs]
     text.box = [Math.min(marker.box[0], text.box[0]), Math.min(marker.box[1], text.box[1]), Math.max(marker.box[2], text.box[2]), Math.max(marker.box[3], text.box[3])]
@@ -254,8 +357,12 @@ function joinBullets(lines: StyledLine[]): StyledLine[] {
 
 const sameStyle = (a: StyledLine, b: StyledLine): boolean => Math.abs(a.size - b.size) < 0.6 && a.bold === b.bold && a.rtl === b.rtl && a.kind === b.kind
 
-/** Groups a page's lines into paragraphs, top to bottom. */
-export function paragraphs(lines: StyledLine[]): Paragraph[] {
+/**
+ * Groups a page's lines into paragraphs, top to bottom. `loose`: a full line whose words are
+ * partly bold continues its paragraph even when bold wins the line (Office conversion; the
+ * editor restyles a paragraph as one, so it keeps them apart).
+ */
+export function paragraphs(lines: StyledLine[], loose = false): Paragraph[] {
   const sorted = [...lines].filter((l) => l.horizontal).sort((a, b) => a.baseline - b.baseline || a.box[0] - b.box[0])
   const groups: StyledLine[][] = []
   for (const line of sorted) {
@@ -272,7 +379,8 @@ export function paragraphs(lines: StyledLine[]): Paragraph[] {
       const column = Math.max(...group.map((l) => l.box[2] - l.box[0]), line.box[2] - line.box[0])
       const lastWasFull = last.box[2] - last.box[0] >= column * 0.6
       const joinable = !line.tabular && !last.tabular && lastWasFull
-      if (joinable && sameStyle(line, last) && regular && overlap > Math.min(line.box[2] - line.box[0], last.box[2] - last.box[0]) * 0.3) {
+      const styled = sameStyle(line, last) || (loose && (line.mixed || last.mixed) && Math.abs(line.size - last.size) < 0.6 && line.rtl === last.rtl && line.kind === last.kind)
+      if (joinable && styled && regular && overlap > Math.min(line.box[2] - line.box[0], last.box[2] - last.box[0]) * 0.3) {
         group.push(line)
         joined = true
         break

@@ -465,6 +465,9 @@ const handlers: Record<string, (...args: unknown[]) => unknown> = {
         sheets: z.enum(['page', 'tables']).optional(),
         pages: pages.nullable(),
         pageBreaks: z.boolean(),
+        // Word's layout (§117). zod drops keys it is not told about: without this line the
+        // "Flowing text" choice never reached the converter.
+        layout: z.enum(['exact', 'flow']).optional(),
         removeTatweel: z.boolean(),
         digits: z.enum(['keep', 'western', 'arabic'])
       })
@@ -493,7 +496,7 @@ const handlers: Record<string, (...args: unknown[]) => unknown> = {
       z.object({ kind: z.literal('pageNumbers'), template: z.string().min(1).max(100) }),
       z.object({ kind: z.literal('rotate'), angle: z.union([z.literal(90), z.literal(180), z.literal(270)]) }),
       z.object({ kind: z.literal('protect'), password: z.string().min(1).max(127) }),
-      z.object({ kind: z.literal('convert'), format: z.enum(['docx', 'xlsx', 'pptx', 'md', 'txt']) })
+      z.object({ kind: z.literal('convert'), format: z.enum(['docx', 'xlsx', 'pptx', 'md', 'txt']), layout: z.enum(['exact', 'flow']).optional() })
     ])
     return worker.call(
       'runBatch',

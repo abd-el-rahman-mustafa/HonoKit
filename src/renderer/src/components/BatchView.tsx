@@ -256,6 +256,21 @@ function StepOptions({ step, onChange }: { step: BatchStep; onChange: (s: BatchS
     case 'protect':
       return <TextInput type="password" value={step.password} placeholder={t('batch.password')} onChange={(e) => onChange({ ...step, password: e.target.value })} />
     case 'convert':
-      return <Select compact value={step.format} onChange={(format) => onChange({ ...step, format })} options={(['docx', 'xlsx', 'pptx', 'md', 'txt'] as const).map((v) => ({ value: v, label: t(`convert.${v}` as Key) }))} />
+      return (
+        <div className="flex flex-col gap-1.5">
+          <Select compact value={step.format} onChange={(format) => onChange({ ...step, format })} options={(['docx', 'xlsx', 'pptx', 'md', 'txt'] as const).map((v) => ({ value: v, label: t(`convert.${v}` as Key) }))} />
+          {step.format === 'docx' && (
+            <Select
+              compact
+              value={step.layout ?? 'exact'}
+              onChange={(layout) => onChange({ ...step, layout })}
+              options={[
+                { value: 'exact', label: t('convert.layoutExact') },
+                { value: 'flow', label: t('convert.layoutFlow') }
+              ]}
+            />
+          )}
+        </div>
+      )
   }
 }

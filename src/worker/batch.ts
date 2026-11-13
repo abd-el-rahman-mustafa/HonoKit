@@ -71,7 +71,7 @@ export async function runBatch(files: string[], steps: BatchStep[], output: { fo
       const stem = `${basename(file, extname(file))}${output.suffix}`
       if (convert) {
         const target = freeName(folder, stem, `.${convert.format}`)
-        const r = await exportOffice(bytes, { format: convert.format, removeTatweel: true, digits: 'keep', pageBreaks: false, pictureFolder: `${basename(target, extname(target))}_pictures` })
+        const r = await exportOffice(bytes, { format: convert.format, layout: convert.layout ?? 'exact', removeTatweel: true, digits: 'keep', pageBreaks: false, pictureFolder: `${basename(target, extname(target))}_pictures` })
         await writeFile(target, r.bytes)
         if (r.extra.length) {
           const pictures = join(folder, `${basename(target, extname(target))}_pictures`)

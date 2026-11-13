@@ -17,8 +17,10 @@ export type OfficeFormat = 'docx' | 'pptx' | 'xlsx' | 'md' | 'txt'
 
 export interface ExportOptions extends BuildOptions {
   format: OfficeFormat
-  /** Word: start every PDF page on a new page. */
+  /** Word: start every PDF page on a new page (flowing text). */
   pageBreaks: boolean
+  /** Word: keep the look of each page (default) or flowing text (docx.ts). */
+  layout?: 'exact' | 'flow'
   /** Markdown: the folder name (beside the file) for its pictures. */
   pictureFolder: string
   /** Excel: a sheet per page, or a sheet per ruled table. */
@@ -45,7 +47,10 @@ export function modelOf(bytes: Uint8Array, options: BuildOptions, password?: str
 }
 
 export async function exportOffice(bytes: Uint8Array, options: ExportOptions, password?: string): Promise<ExportResult> {
-  const model = modelOf(bytes, options, password)
+  const layout = options.layout ?? 'exact'
+  // Writers that place things where they were take the page's drawings (art); flowing ones its charts as pictures.
+  const art = options.format === 'pptx' || (options.format === 'docx' && layout === 'exact')
+  const model = modelOf(bytes, { ...options, art, figures: !art && (options.format === 'docx' || options.format === 'md') }, password)
   if (options.format === 'xlsx') {
     const doc = openPdf(bytes, password)
     try {
@@ -70,7 +75,7 @@ export async function exportOffice(bytes: Uint8Array, options: ExportOptions, pa
   }
   switch (options.format) {
     case 'docx':
-      return { bytes: await writeDocx(model, { pageBreaks: options.pageBreaks }), extra: [], ...stats }
+      return { bytes: await writeDocx(model, { layout, pageBreaks: options.pageBreaks }), extra: [], ...stats }
     case 'pptx':
       return { bytes: await writePptx(model), extra: [], ...stats }
     case 'md': {

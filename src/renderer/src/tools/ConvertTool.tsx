@@ -26,6 +26,7 @@ export function ConvertTool({ view, initial = 'docx' }: { view: DocView; initial
   const scope = usePageScope(view)
   const [format, setFormat] = useState<Format>(initial)
   const [pageBreaks, setPageBreaks] = useState(false)
+  const [layout, setLayout] = useState<'exact' | 'flow'>('exact')
   const [removeTatweel, setRemoveTatweel] = useState(true)
   const [digits, setDigits] = useState<'keep' | 'western' | 'arabic'>('keep')
   const [openAfter, setOpenAfter] = useState(true)
@@ -34,7 +35,7 @@ export function ConvertTool({ view, initial = 'docx' }: { view: DocView; initial
     const path = await window.api.pickExportPath(view.info.name, format)
     if (!path) return
     const r = await runBusy(t('convert.working'), () =>
-      window.api.exportOffice(view.info.id, { format, pages: scope.pages ?? (scope.scope === 'all' ? null : scope.preview), pageBreaks, removeTatweel, digits, sheets }, path)
+      window.api.exportOffice(view.info.id, { format, pages: scope.pages ?? (scope.scope === 'all' ? null : scope.preview), pageBreaks, layout, removeTatweel, digits, sheets }, path)
     )
     if (!r) return
     if (openAfter) void window.api.openConverted(r.path)
@@ -77,7 +78,19 @@ export function ConvertTool({ view, initial = 'docx' }: { view: DocView; initial
         </div>
       </Section>
       <Section title={t('convert.options')}>
-        {format === 'docx' && <Check checked={pageBreaks} onChange={setPageBreaks} label={t('convert.pageBreaks')} hint={t('convert.pageBreaksHint')} />}
+        {format === 'docx' && (
+          <Field label={t('convert.layout')}>
+            <Select
+              value={layout}
+              onChange={setLayout}
+              options={[
+                { value: 'exact', label: t('convert.layoutExact'), hint: t('convert.layoutExactHint') },
+                { value: 'flow', label: t('convert.layoutFlow'), hint: t('convert.layoutFlowHint') }
+              ]}
+            />
+          </Field>
+        )}
+        {format === 'docx' && layout === 'flow' && <Check checked={pageBreaks} onChange={setPageBreaks} label={t('convert.pageBreaks')} hint={t('convert.pageBreaksHint')} />}
         {format === 'xlsx' && (
           <Field label={t('convert.sheets')}>
             <Select

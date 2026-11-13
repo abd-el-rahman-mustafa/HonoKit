@@ -24,7 +24,7 @@ let cache: Map<string, SystemFontFamily> | null = null
 
 function registry(key: string): Array<[string, string]> {
   try {
-    const out = execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe'), ['query', key], { encoding: 'utf8', windowsHide: true, timeout: 5000 })
+    const out = execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe'), ['query', key], { encoding: 'utf8', windowsHide: true, timeout: 15000 })
     return out
       .split(/\r?\n/)
       .map((l) => /^\s{4}(.+?)\s{4}REG_(?:EXPAND_)?SZ\s{4}(.+)$/.exec(l))
@@ -42,10 +42,8 @@ export function systemFonts(): Map<string, SystemFontFamily> {
   const map = new Map<string, SystemFontFamily>()
   if (process.platform !== 'win32') return (cache = map)
   const fontsDir = join(process.env.SystemRoot ?? 'C:\\Windows', 'Fonts')
-  const entries = [
-    ...registry('HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts'),
-    ...registry('HKCU\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts')
-  ]
+  const machine = registry('HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts')
+  const entries = [...machine, ...registry('HKCU\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts')]
   for (const [name, value] of entries) {
     if (!/\((TrueType|OpenType)\)$/i.test(name)) continue
     const file = /^[a-z]:\\/i.test(value) ? value : join(fontsDir, value)
@@ -62,7 +60,9 @@ export function systemFonts(): Map<string, SystemFontFamily> {
     map.set(family, entry)
   }
   // Families with no regular face (only a bold one) keep what they have.
-  cache = map
+  // Windows always lists fonts for the machine: none means reg.exe timed out on a busy PC, and
+  // keeping that would hide every installed font until a restart. It is asked again next time.
+  if (machine.length > 0) cache = map
   return map
 }
 

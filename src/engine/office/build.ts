@@ -2,7 +2,8 @@ import { pageGeometry } from '../render'
 import { free, mupdf, type PdfDoc } from '../mupdf'
 import { paragraphs, styledLines, type Paragraph, type StyledLine, type StyleRun } from '../paragraphs'
 import { foldString, UNMAPPED, unreadable, withoutUnmapped } from '../text'
-import type { Block, Box, DocModel, PageModel, ParagraphBlock, PictureBlock, TableBlock, TableCell } from './model'
+import { pageArt, regionPicture } from './art'
+import type { Block, Box, DocModel, LineBlock, PageModel, ParagraphBlock, PictureBlock, TableBlock, TableCell } from './model'
 
 /**
  * PDF pages → the Office model (docs/research-pdf-to-office.md §6.2, phase A): lines with
@@ -17,29 +18,86 @@ export interface BuildOptions {
   /** Remove tatweel used to stretch words (a Word paragraph justifies itself). */
   removeTatweel: boolean
   digits: 'keep' | 'western' | 'arabic'
+  /**
+   * Positioned writers (PowerPoint, Word "keep the look"): each page's drawings without text as
+   * its background, pictures cut from the page as drawn (art.ts). CHANGES THE DOCUMENT given.
+   */
+  art?: boolean
+  /** Flowing writers: drawings with many parts (a chart, a logo) become pictures, their labels with them. */
+  figures?: boolean
 }
 
 interface Extras {
   pictures: PictureBlock[]
+  /** Pixels of each picture (same order): how sharp to draw it again. */
+  pixels: number[]
+  /** Every drawing's box (for charts and logos). */
+  vectors: Box[]
   segments: { h: Array<{ y: number; x0: number; x1: number }>; v: Array<{ x: number; y0: number; y1: number }> }
 }
 
+/**
+ * A picture as the page shows it, on white: turned as placed, its soft mask applied (the picture
+ * drawn through it), any colour space in RGB. The raw pixels
+ * kept a logo's transparent part black (a red word mark on a black box) and lost CMYK pictures.
+ */
+function flattened(image: mupdf.Image, placed: mupdf.Matrix, box: Box): mupdf.Pixmap {
+  const w = box[2] - box[0]
+  const h = box[3] - box[1]
+  const scale = Math.min(4, Math.max(1, Math.sqrt((image.getWidth() * image.getHeight()) / (w * h))))
+  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale))], false)
+  const ctm = mupdf.Matrix.concat(placed, mupdf.Matrix.concat(mupdf.Matrix.translate(-box[0], -box[1]), mupdf.Matrix.scale(scale, scale)))
+  const device = new mupdf.DrawDevice(mupdf.Matrix.identity, pixmap)
+  const mask = image.getMask()
+  try {
+    pixmap.clear(255)
+    // MuPDF holds a soft mask as an image of coverage only: it clips (filling it is refused).
+    if (mask) device.clipImageMask(mask, ctm)
+    device.fillImage(image, ctm, 1)
+    if (mask) device.popClip()
+    device.close()
+    return pixmap
+  } catch (error) {
+    free(pixmap)
+    throw error
+  } finally {
+    free(device, mask)
+  }
+}
+
 /** Pictures and ruled lines of a page (MuPDF's walker, which gives both with their boxes). */
-function extras(doc: PdfDoc, pageIndex: number): Extras {
+function extras(doc: PdfDoc, pageIndex: number, decode: boolean): Extras {
   const page = doc.loadPage(pageIndex)
   const stext = page.toStructuredText('preserve-images,vectors')
-  const out: Extras = { pictures: [], segments: { h: [], v: [] } }
+  const out: Extras = { pictures: [], pixels: [], vectors: [], segments: { h: [], v: [] } }
   try {
     stext.walk({
-      onImageBlock(bbox: mupdf.Rect, _m: mupdf.Matrix, image: mupdf.Image) {
+      onImageBlock(bbox: mupdf.Rect, m: mupdf.Matrix, image: mupdf.Image) {
         const w = bbox[2] - bbox[0]
         const h = bbox[3] - bbox[1]
         if (w < 6 || h < 6) return
         try {
-          const pixmap = image.toPixmap()
-          const png = pixmap.asPNG()
-          out.pictures.push({ kind: 'picture', box: [bbox[0], bbox[1], bbox[2], bbox[3]], png, width: pixmap.getWidth(), height: pixmap.getHeight() })
-          free(pixmap)
+          const box: Box = [bbox[0], bbox[1], bbox[2], bbox[3]]
+          if (!decode) {
+            // Drawn again from the page later (art.ts): only its place and size are needed.
+            out.pictures.push({ kind: 'picture', box, data: new Uint8Array(0), type: 'png', width: image.getWidth(), height: image.getHeight() })
+            out.pixels.push(image.getWidth() * image.getHeight())
+            return
+          }
+          let pixmap: mupdf.Pixmap
+          try {
+            pixmap = flattened(image, m, box)
+          } catch {
+            // As stored, then: a picture is better with a dark corner than left out.
+            pixmap = image.toPixmap()
+          }
+          try {
+            const data = pixmap.asPNG()
+            out.pictures.push({ kind: 'picture', box, data, type: 'png', width: pixmap.getWidth(), height: pixmap.getHeight() })
+            out.pixels.push(image.getWidth() * image.getHeight())
+          } finally {
+            free(pixmap)
+          }
         } catch {
           /* a picture MuPDF cannot decode is left out */
         }
@@ -48,6 +106,7 @@ function extras(doc: PdfDoc, pageIndex: number): Extras {
         const [x0, y0, x1, y1] = bbox
         const w = x1 - x0
         const h = y1 - y0
+        if (w > 0.2 || h > 0.2) out.vectors.push([x0, y0, x1, y1])
         if (h <= 2.5 && w >= 8) out.segments.h.push({ y: (y0 + y1) / 2, x0, x1 })
         else if (w <= 2.5 && h >= 8) out.segments.v.push({ x: (x0 + x1) / 2, y0, y1 })
         else if (flags.isStroked && flags.isRectangle && w >= 8 && h >= 8) {
@@ -109,7 +168,7 @@ function cropPicture(doc: PdfDoc, pageIndex: number, box: Box, clip: Box): Pictu
     pixmap.clear(255)
     page.run(device, mupdf.Matrix.identity)
     device.close()
-    return { kind: 'picture', box: b, png: pixmap.asPNG(), width: pixmap.getWidth(), height: pixmap.getHeight() }
+    return { kind: 'picture', box: b, data: pixmap.asPNG(), type: 'png', width: pixmap.getWidth(), height: pixmap.getHeight() }
   } catch {
     return null
   } finally {
@@ -207,9 +266,30 @@ function splitAtMarkers(p: Paragraph): Paragraph[] {
 }
 
 function paragraphBlock(p: Paragraph, options: BuildOptions): ParagraphBlock {
+  // A soft hyphen the PDF drew at a line's end is a hyphen there (PowerPoint shows no soft hyphen,
+  // and flowing text joins the word again only at a hyphen); anywhere else it is nothing.
+  const soft = new RegExp(String.fromCharCode(0xad), 'g')
+  const lineEnds = p.lines.map((line) => {
+    const runs = line.runs.map((r) => ({ ...r, text: r.text.replace(soft, '') }))
+    const last = runs[runs.length - 1]
+    const original = line.runs[line.runs.length - 1]
+    if (last && original && original.text.trimEnd().endsWith(String.fromCharCode(0xad))) last.text = last.text.trimEnd() + '-'
+    return { ...line, runs }
+  })
+  const clean = (runs: StyleRun[]): StyleRun[] => runs.map((r) => ({ ...r, text: normalise(r.text, options) })).filter((r) => r.text.length > 0)
+  const lines: LineBlock[] = lineEnds.map((line) =>
+    line.marker
+      ? {
+          runs: clean(line.runs.slice(line.marker.runs.length)),
+          box: line.marker.textBox,
+          baseline: line.baseline,
+          marker: { runs: clean(line.marker.runs), box: line.marker.box }
+        }
+      : { runs: clean(line.runs), box: line.box, baseline: line.baseline }
+  )
   const runs: StyleRun[] = []
-  p.lines.forEach((line, i) => {
-    const next = p.lines[i + 1]
+  lineEnds.forEach((line, i) => {
+    const next = lineEnds[i + 1]
     const lineRuns = line.runs.map((r) => ({ ...r }))
     const last = lineRuns[lineRuns.length - 1]
     // A Latin word broken with a hyphen at the line's end is joined again.
@@ -243,6 +323,7 @@ function paragraphBlock(p: Paragraph, options: BuildOptions): ParagraphBlock {
     kind: 'paragraph',
     box: p.box,
     runs: runs.filter((r) => r.text.length > 0),
+    lines,
     rtl: p.style.rtl,
     alignment: p.alignment,
     heading: 0,
@@ -275,7 +356,7 @@ function tableBlock(grid: Grid, lines: StyledLine[], unmapped: StyledLine[], cro
       const pictures = unreadableAreas(unmapped.filter((l) => inCell(l, r, c, end)))
         .map((area) => crop(area, inside))
         .filter((p): p is PictureBlock => p !== null)
-      row.push({ paragraphs: paragraphs(cellLines).map((p) => paragraphBlock(p, options)), pictures, span: end - c })
+      row.push({ paragraphs: paragraphs(cellLines, true).map((p) => paragraphBlock(p, options)), pictures, span: end - c })
       c = end
     }
     rows.push(row)
@@ -324,6 +405,51 @@ function readingOrder(blocks: Block[], rtl: boolean, pageWidth: number): Block[]
   return byTop.sort((a, b) => (Math.abs(a.box[1] - b.box[1]) < 4 ? (rtl ? b.box[2] - a.box[2] : a.box[0] - b.box[0]) : 0))
 }
 
+/**
+ * Areas drawn with many parts — a chart, a diagram, a logo made of shapes — with the short labels
+ * around them: a flowing document shows them as pictures (their numbers and labels were scattered
+ * as loose lines of text before). Table rules, backgrounds, underlines and lone boxes are not figures,
+ * and an area with real text in it (a table with shaded rows, a callout) is not one either.
+ */
+function figureRegions(vectors: Box[], grids: Grid[], lines: StyledLine[], width: number, height: number): Box[] {
+  const page = width * height
+  const thin = (b: Box): boolean => b[2] - b[0] <= 2.5 || b[3] - b[1] <= 2.5
+  const items = vectors.filter((b) => (b[2] - b[0]) * (b[3] - b[1]) < page * 0.25 && !grids.some((g) => b[0] >= g.box[0] - 2 && b[2] <= g.box[2] + 2 && b[1] >= g.box[1] - 2 && b[3] <= g.box[3] + 2))
+  if (items.length < 6 || items.length > 2500) return []
+  const near = (a: Box, b: Box, d: number): boolean => a[0] - d < b[2] && b[0] - d < a[2] && a[1] - d < b[3] && b[1] - d < a[3]
+  const parent = items.map((_, i) => i)
+  const root = (i: number): number => (parent[i] === i ? i : (parent[i] = root(parent[i]!)))
+  for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) if (near(items[i]!, items[j]!, 6)) parent[root(i)] = root(j)
+  const groups = new Map<number, Box[]>()
+  items.forEach((b, i) => groups.set(root(i), [...(groups.get(root(i)) ?? []), b]))
+  const union = (bs: Box[]): Box => [Math.min(...bs.map((b) => b[0])), Math.min(...bs.map((b) => b[1])), Math.max(...bs.map((b) => b[2])), Math.max(...bs.map((b) => b[3]))]
+  const regions: Box[] = []
+  for (const g of groups.values()) {
+    if (g.length < 6 || g.filter((b) => !thin(b)).length < 3) continue
+    let box = union(g)
+    if (box[2] - box[0] < 30 || box[3] - box[1] < 30 || (box[2] - box[0]) * (box[3] - box[1]) > page * 0.5) continue
+    // Labels beside it (axis numbers, a legend) join it; text inside must be short labels only.
+    for (let pass = 0; pass < 2; pass++) {
+      const labels = lines.filter((l) => near(l.box, box, l.size * 1.2) && l.text.length <= 30)
+      if (labels.length) box = union([box, ...labels.map((l) => l.box)])
+      const others = items.filter((b) => near(b, box, 8) && (b[2] - b[0]) * (b[3] - b[1]) < (box[2] - box[0]) * (box[3] - box[1]))
+      if (others.length) box = union([box, ...others])
+    }
+    const inside = lines.filter((l) => near(l.box, box, -1))
+    const inked = inside.reduce((n, l) => n + (l.box[2] - l.box[0]) * (l.box[3] - l.box[1]), 0)
+    if (inside.some((l) => l.text.length > 30) || inked > (box[2] - box[0]) * (box[3] - box[1]) * 0.12) continue
+    regions.push([Math.max(0, box[0] - 2), Math.max(0, box[1] - 2), Math.min(width, box[2] + 2), Math.min(height, box[3] + 2)])
+  }
+  // Overlapping figures are one.
+  const merged: Box[] = []
+  for (const r of regions) {
+    const hit = merged.findIndex((m) => near(m, r, 0))
+    if (hit >= 0) merged[hit] = union([merged[hit]!, r])
+    else merged.push(r)
+  }
+  return merged
+}
+
 /** "Page 3 of 10" → "page # of #": the same running line on every page, whatever its numbers. */
 const runningKey = (text: string): string => foldString(text).replace(/[0-9٠-٩]+/g, '#').replace(/\s+/g, ' ').trim()
 
@@ -331,7 +457,7 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
   const count = doc.countPages()
   const targets = options.pages ?? Array.from({ length: count }, (_, i) => i)
   const pageLines = targets.map((p) => {
-    const all = styledLines(doc, p).filter((l) => l.horizontal)
+    const all = styledLines(doc, p, { reading: true }).filter((l) => l.horizontal)
     // Lines the file maps to nothing are left out of the text and come back as pictures (§68).
     return { index: p, geometry: pageGeometry(doc, p), lines: all.filter((l) => !pictureLine(l.text)), unreadable: all.filter((l) => pictureLine(l.text)) }
   })
@@ -343,7 +469,8 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
     for (const k of keys) seen.set(k, (seen.get(k) ?? 0) + 1)
   }
   const needed = Math.max(2, Math.ceil(targets.length * 0.6))
-  const running = new Set([...seen].filter(([k, n]) => n >= needed && k.split('|')[1]).map(([k]) => k))
+  // Placed writers keep every line where it is: no running header or footer is taken out.
+  const running = new Set(options.art ? [] : [...seen].filter(([k, n]) => n >= needed && k.split('|')[1]).map(([k]) => k))
   let header: string | null = null
   let footer: string | null = null
 
@@ -362,7 +489,7 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
       }
       kept.push(l)
     }
-    const { pictures, segments } = extras(doc, pl.index)
+    const { pictures, pixels, vectors, segments } = extras(doc, pl.index, !options.art)
     const crop: Crop = (box, clip) => cropPicture(doc, pl.index, box, clip)
     const grids = findGrids(segments)
     const tables: TableBlock[] = []
@@ -383,19 +510,55 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
     }
     const text = kept.map((l) => l.text).join(' ')
     const rtl = arabicCount(text) > latinCount(text)
-    // A picture covering most of a page that has text is a background or a scan under its text: left out.
-    const shownPictures = pictures.filter((p) => {
-      const area = ((p.box[2] - p.box[0]) * (p.box[3] - p.box[1])) / (width * height)
-      const inTable = tables.some((t) => p.box[0] >= t.box[0] - 1 && p.box[2] <= t.box[2] + 1 && p.box[1] >= t.box[1] - 1 && p.box[3] <= t.box[3] + 1)
-      return !inTable && !(area > 0.6 && kept.length > 3)
-    })
-    // Unreadable lines outside tables (§68), after that filter: a page all in such a font is a large crop, not a background.
-    for (const area of unreadableAreas(unmapped)) {
-      const picture = crop(area, [0, 0, width, height])
-      if (picture) shownPictures.push(picture)
+    const share = (p: PictureBlock): number => ((p.box[2] - p.box[0]) * (p.box[3] - p.box[1])) / (width * height)
+    const within = (inner: Box, outer: Box, slack = 1): boolean => inner[0] >= outer[0] - slack && inner[2] <= outer[2] + slack && inner[1] >= outer[1] - slack && inner[3] <= outer[3] + slack
+    const touches = (a: Box, b: Box): boolean => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+    // Charts and logos drawn as vectors, with their labels, as pictures (flowing writers).
+    const figures: PictureBlock[] = []
+    if (options.figures && !options.art) {
+      for (const region of figureRegions(vectors, grids, flowing, width, height)) {
+        const picture = regionPicture(doc, pl.index, region)
+        if (!picture) continue
+        figures.push(picture)
+        const centred = (l: StyledLine): boolean => within([(l.box[0] + l.box[2]) / 2, (l.box[1] + l.box[3]) / 2, (l.box[0] + l.box[2]) / 2, (l.box[1] + l.box[3]) / 2], region, 0)
+        flowing = flowing.filter((l) => !centred(l))
+        unmapped = unmapped.filter((l) => !centred(l))
+      }
     }
-    const blocks: Block[] = [...paragraphs(flowing).flatMap(splitAtMarkers).map((p) => paragraphBlock(p, options)), ...tables, ...shownPictures]
-    return { width, height, rtl, blocks: readingOrder(blocks, rtl, width) }
+    // A picture covering most of a page that has text is a background or a scan under its text.
+    const behind = (p: PictureBlock): boolean => share(p) > 0.6 && kept.length > 3
+    let shownPictures: PictureBlock[]
+    let background: PictureBlock | null = null
+    // Unreadable lines outside tables (§68): a page all in such a font is a large crop, not a background.
+    const unreadableCrops = unreadableAreas(unmapped)
+      .map((area) => crop(area, [0, 0, width, height]))
+      .filter((p): p is PictureBlock => p !== null)
+    // Placed writers: icons of an icon font (an envelope before an address) the file maps to nothing, as drawn.
+    if (options.art)
+      for (const icon of kept.flatMap((l) => l.icons ?? [])) {
+        const picture = crop([icon[0] - 0.5, icon[1] - 0.5, icon[2] + 0.5, icon[3] + 0.5], [0, 0, width, height])
+        if (picture) unreadableCrops.push(picture)
+      }
+    if (options.art) {
+      // Last, as it changes the document: drawings behind, pictures as drawn (art.ts). A picture over
+      // a background picture stays part of it (taking it out would take the background too).
+      const bigs = pictures.filter(behind)
+      const separate = pictures.map((p, i) => ({ p, pixels: pixels[i] ?? 0 })).filter(({ p }) => !behind(p) && !bigs.some((b) => touches(b.box, p.box)))
+      const art = pageArt(doc, pl.index, width, height, separate.map(({ p, pixels: n }) => ({ box: p.box, pixels: n })))
+      background = art.background
+      shownPictures = [...art.pictures.filter((p): p is PictureBlock => p !== null), ...unreadableCrops]
+    } else {
+      // A long strip along the page's edge (a coloured bar) is decoration: flowing, it took a page of its own.
+      const strip = (p: PictureBlock): boolean => {
+        const [x0, y0, x1, y1] = p.box
+        const edge = x0 < 3 || y0 < 3 || x1 > width - 3 || y1 > height - 3
+        return edge && Math.max(x1 - x0, y1 - y0) > 6 * Math.min(x1 - x0, y1 - y0)
+      }
+      shownPictures = pictures.filter((p) => !tables.some((t) => within(p.box, t.box)) && !behind(p) && !strip(p) && !figures.some((f) => within(p.box, f.box, 2)))
+      shownPictures.push(...unreadableCrops, ...figures)
+    }
+    const blocks: Block[] = [...paragraphs(flowing, true).flatMap(splitAtMarkers).map((p) => paragraphBlock(p, options)), ...tables, ...shownPictures]
+    return { width, height, rtl, background, blocks: readingOrder(blocks, rtl, width) }
   })
 
   // Headings: bigger than body text; the biggest sizes are the higher levels.
