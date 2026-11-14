@@ -212,6 +212,45 @@ describe("new words in the page's own font (§59)", () => {
       free(after)
     }
   })
+
+  it('sets only the word the font cannot show in a stand-in; the words beside it keep the font', async () => {
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(fontkit)
+    const font = await pdf.embedFont(new Uint8Array(readFileSync('resources/fonts/NotoSans-Regular.ttf')), { subset: true })
+    const page = pdf.addPage([400, 300])
+    page.drawText('alpha beta gamma delta epsilon', { x: 40, y: 220, size: 12, font })
+    const src = new Uint8Array(await pdf.save())
+    const doc = openPdf(src)
+    const first = styledLines(doc, 0)[0]!
+    const original = first.runs[0]!.font
+    free(doc)
+    // The subset has no capital Q and no digit 7: one word needs another font, the rest do not.
+    const r = await replaceText(src, 0, first.box, 'alpha beta Q7Q delta epsilon')
+    const after = openPdf(r.bytes)
+    try {
+      const fontOf = new Map<string, Set<string>>()
+      let word = ''
+      let fonts = new Set<string>()
+      const end = (): void => {
+        if (word) fontOf.set(word, fonts)
+        word = ''
+        fonts = new Set()
+      }
+      after.loadPage(0).toStructuredText('preserve-whitespace').walk({
+        onChar(c: string, _o: unknown, f: mupdf.Font) {
+          if (!c.trim()) return end()
+          word += c
+          fonts.add(f.getName())
+        },
+        endLine: end
+      })
+      expect([...fontOf.keys()]).toEqual(['alpha', 'beta', 'Q7Q', 'delta', 'epsilon'])
+      for (const w of ['alpha', 'beta', 'delta', 'epsilon']) expect([...fontOf.get(w)!]).toEqual([original])
+      expect([...fontOf.get('Q7Q')!]).not.toContain(original)
+    } finally {
+      free(after)
+    }
+  })
 })
 
 describe('reading', () => {
