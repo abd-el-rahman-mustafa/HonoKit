@@ -4,7 +4,7 @@ import { BRAND } from '@shared/brand'
 import { directedRuns, type DirectedRun } from './bidiruns'
 import { EMU, hex, shapeParts, solid, svgExtension } from './drawingml'
 import { joinedRuns, linkTrimmed, textBoxes, type TextBox } from './fit'
-import { descentShare, drawnFamilies, fontsFor } from './fonts'
+import { ARABIC, descentShare, drawnFamilies, fontsFor } from './fonts'
 import type { Box, DocModel, LineBlock, PageModel, ParagraphBlock, PictureBlock, ShapeBlock, TableBlock, TableCell } from './model'
 import type { Rule } from './scene'
 
@@ -27,8 +27,8 @@ import type { Rule } from './scene'
  */
 
 /** Characters XML 1.0 does not allow, and markup. */
-const CONTROL = new RegExp(`[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F${String.fromCodePoint(0xfffe, 0xffff)}]`, 'g')
-const esc = (s: string): string => s.replace(CONTROL, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+export const CONTROL = new RegExp(`[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F${String.fromCodePoint(0xfffe, 0xffff)}]`, 'g')
+export const esc = (s: string): string => s.replace(CONTROL, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /**
  * Line spacing as PowerPoint draws it (measured on its PDF export, Arial, Georgia, Calibri, Times New
@@ -68,13 +68,13 @@ function descentOf(line: LineBlock): number {
   return deepest || descentShare('', false, false) * Math.max(1, ...line.runs.map((r) => r.size))
 }
 
-interface Media {
+export interface Media {
   name: string
   bytes: Uint8Array
 }
 
 /** One slide being written: its shapes' XML, ids, pictures and links, and their relationships. */
-class SlideXml {
+export class SlideXml {
   private next = 2
   readonly parts: string[] = []
   readonly rels: Array<{ id: string; target: string; link?: boolean }> = []
@@ -126,7 +126,7 @@ class SlideXml {
  * A run's link: clicking it opens the address. PowerPoint draws linked text in the theme's link
  * colour unless told to keep the text's own (Office 2019's hlinkClr extension).
  */
-const linkXml = (sx: SlideXml, uri: string): string =>
+export const linkXml = (sx: SlideXml, uri: string): string =>
   `<a:hlinkClick r:id="${sx.link(uri)}"><a:extLst><a:ext uri="{A12FA001-AC4F-418D-AE19-62706E023703}"><ahyp:hlinkClr xmlns:ahyp="http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor" val="tx"/></a:ext></a:extLst></a:hlinkClick>`
 
 function xfrm(sx: SlideXml, box: Box, flip = ''): string {
@@ -154,7 +154,9 @@ function runXml(sx: SlideXml, r: DirectedRun, spacing: number): string {
   const sz = Math.max(100, Math.min(400000, Math.round(r.size * sx.scale * 100)))
   const spc = Math.round(spacing * sx.scale * 100)
   // No kerning: the widths were fitted without it (fit.ts).
-  return `<a:r><a:rPr lang="${r.rtl ? 'ar-AE' : 'en-US'}" sz="${sz}" b="${r.bold ? 1 : 0}" i="${r.italic ? 1 : 0}" kern="0"${spc ? ` spc="${spc}"` : ''} dirty="0"><a:solidFill><a:srgbClr val="${hex(r.colour)}"/></a:solidFill><a:latin typeface="${esc(f.latin)}"/><a:cs typeface="${esc(f.arabic)}"/>${r.link ? linkXml(sx, r.link) : ''}</a:rPr><a:t>${esc(r.text)}</a:t></a:r>`
+  // One bold for the run: its Arabic font's when it has Arabic letters (DrawingML has no separate complex-script bold).
+  const bold = ARABIC.test(r.text) ? f.arabicBold : f.latinBold
+  return `<a:r><a:rPr lang="${r.rtl ? 'ar-AE' : 'en-US'}" sz="${sz}" b="${bold ? 1 : 0}" i="${r.italic ? 1 : 0}" kern="0"${spc ? ` spc="${spc}"` : ''} dirty="0"><a:solidFill><a:srgbClr val="${hex(r.colour)}"/></a:solidFill><a:latin typeface="${esc(f.latin)}"/><a:cs typeface="${esc(f.arabic)}"/>${r.link ? linkXml(sx, r.link) : ''}</a:rPr><a:t>${esc(r.text)}</a:t></a:r>`
 }
 
 /**
@@ -322,14 +324,23 @@ export async function writePptx(model: DocModel): Promise<Uint8Array> {
     const notes = notesOf(page).replace(CONTROL, '')
     if (notes) slide.addNotes(notes)
   }
-  const zip = await JSZip.loadAsync((await pres.write({ outputType: 'nodebuffer' })) as Buffer)
   const media: Media[] = []
-  for (let i = 0; i < model.pages.length; i++) {
-    const page = model.pages[i]!
+  const slides = model.pages.map((page) => {
     // A page of another size is scaled to fit the slide, centred.
     const s = Math.min(slideW / page.width, slideH / page.height)
     const sx = new SlideXml(media, s, (slideW - page.width * s) / 2, (slideH - page.height * s) / 2)
-    const shapes = slideShapes(sx, page)
+    return { sx, shapes: slideShapes(sx, page) }
+  })
+  return withShapes(pres, slides, media)
+}
+
+/**
+ * The deck pptxgenjs writes (masters, notes, one empty slide per `slides` entry), each slide given
+ * its shapes and their pictures and links.
+ */
+export async function withShapes(pres: PptxGenJS, slides: Array<{ sx: SlideXml; shapes: string }>, media: Media[]): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync((await pres.write({ outputType: 'nodebuffer' })) as Buffer)
+  for (const [i, { sx, shapes }] of slides.entries()) {
     const slideName = `ppt/slides/slide${i + 1}.xml`
     const xml = await zip.file(slideName)!.async('string')
     zip.file(slideName, xml.replace('</p:spTree>', `${shapes}</p:spTree>`))

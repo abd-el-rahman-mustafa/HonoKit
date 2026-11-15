@@ -61,6 +61,14 @@ describe('Arabic text extraction', () => {
     repairLigatureOrder(glyphs)
     expect(glyphs.map((g) => g.c).join('')).toBe('علىاً')
   })
+
+  it('turns back a ligature of more than two letters (the Allah ligature)', () => {
+    // As MuPDF gives "عبدالله" drawn with the Allah ligature: its letters reversed, all but the first at zero width.
+    const glyphs = [...'عبد'].map((c) => ({ c, width: 5 }))
+    glyphs.push({ c: 'ه', width: 0 }, { c: 'ل', width: 0 }, { c: 'ل', width: 0 }, { c: 'ا', width: 16 }, { c: ' ', width: 2 })
+    repairLigatureOrder(glyphs)
+    expect(glyphs.map((g) => g.c).join('')).toBe('عبدالله ')
+  })
 })
 
 describe('search', () => {

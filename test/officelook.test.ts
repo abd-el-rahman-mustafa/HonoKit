@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { PDFDocument, PDFName, PDFString, StandardFonts, degrees, rgb } from 'pdf-lib'
+import { PDFDocument, PDFHexString, PDFName, PDFString, StandardFonts, beginText, degrees, endText, moveText, rgb, setFontAndSize, showText } from 'pdf-lib'
 import { embedFace } from '@engine/fonts'
 import { exportOffice, modelOf } from '@engine/office'
+import { fontsFor, learnFallbacks } from '@engine/office/fonts'
+import { systemFonts } from '@engine/systemFonts'
 import type { ParagraphBlock } from '@engine/office/model'
 import { fromDingbats } from '@engine/dingbats'
 import { mupdf } from '@engine/mupdf'
@@ -358,6 +360,54 @@ describe('PDF to Office: keeping the look', () => {
         image.destroy()
       }
     }
+  })
+})
+
+describe('PDF to Office: digits and headlines as printed (2026-11-15)', () => {
+  it('writes Arabic-Indic digit codes as the Western digits their font draws, the decimal mark too', async () => {
+    // As Gulf newspapers set numbers: the text says ٢٠٢٦ and ١٫٢, the font draws 2026 and 1,2.
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 200])
+    const cmap = '/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Digits def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <2C> <066B> endbfchar 1 beginbfrange <30> <39> <0660> endbfrange endcmap CMapName currentdict /CMap defineresource pop end end'
+    const toUnicode = pdf.context.register(pdf.context.stream(cmap))
+    const drawnWestern = pdf.context.register(pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Helvetica', Encoding: 'WinAnsiEncoding', ToUnicode: toUnicode }))
+    page.node.setFontDictionary(PDFName.of('FW'), drawnWestern)
+    page.pushOperators(beginText(), setFontAndSize('FW', 20), moveText(40, 150), showText(PDFHexString.of(Buffer.from('2026 1,2 74', 'latin1').toString('hex'))), endText())
+    // A font that draws Arabic-Indic digits as Arabic-Indic digits keeps them.
+    page.drawText('٢٠٢٦ ٧٤', { x: 40, y: 80, size: 20, font: await embedFace(pdf, 'arabic') })
+    const texts = paragraphsOf(modelOf(new Uint8Array(await pdf.save()), BASE)).map(words)
+    expect(texts).toContain('2026 1,2 74')
+    const shownIndic = (t: string): boolean => /[٠-٩]{4}/.test(t) && !/[0-9]/.test(t)
+    expect(texts.filter(shownIndic)).toHaveLength(1)
+    // Asked for Arabic-Indic digits, the person gets them everywhere.
+    const asked = paragraphsOf(modelOf(new Uint8Array(await pdf.save()), { ...BASE, digits: 'arabic' })).map(words)
+    expect(asked.filter(shownIndic)).toHaveLength(2)
+  })
+
+  it.skipIf(!systemFonts().has('Dubai'))('sets Arabic headlines in a missing font in Dubai, a weight heavier, digits with them', () => {
+    const body = 'نص المتن في عمود الصفحة الطويل'
+    const run = (font: string, size: number, text = body) => ({ family: font.replace(/-.*/, ''), font: `ABCDEF+${font}`, kind: 'serif' as const, bold: false, italic: false, size, text })
+    learnFallbacks([
+      ...Array.from({ length: 6 }, () => ({ runs: [run('NewsBody-Light', 9)], width: 120 })),
+      { runs: [run('NewsHead-SemiBold', 27, 'عنوان الصفحة الأولى')], width: 200 }
+    ])
+    // SemiBold and Medium headlines: Dubai Bold; a Regular kicker: Dubai Medium (display faces run heavy).
+    expect(fontsFor({ ...run('NewsHead-SemiBold', 27) })).toMatchObject({ arabic: 'Dubai', arabicBold: true, latin: 'Dubai', latinBold: true })
+    expect(fontsFor({ ...run('NewsHead-Medium', 16) })).toMatchObject({ arabic: 'Dubai', arabicBold: true })
+    expect(fontsFor({ ...run('NewsHead-Regular', 15) })).toMatchObject({ arabic: 'Dubai Medium', arabicBold: false })
+    // Body sizes keep their stand-in, whatever the family.
+    expect(fontsFor({ ...run('NewsHead-Regular', 9) }).arabic).not.toMatch(/^Dubai/)
+    expect(fontsFor({ ...run('NewsBody-Light', 9) }).arabic).not.toMatch(/^Dubai/)
+  })
+
+  it('leaves room under a Word frame for letters that go below the line (Dubai yeh dots)', async () => {
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 200])
+    page.drawText('A headline on its own line', { x: 40, y: 120, size: 24, font: await pdf.embedFont(StandardFonts.Helvetica) })
+    const r = await exportOffice(new Uint8Array(await pdf.save()), { ...BASE, format: 'docx', layout: 'exact' })
+    const xml = await (await JSZip.loadAsync(r.bytes)).file('word/document.xml')!.async('string')
+    const p = /<w:framePr[^>]*w:h="(\d+)"[^>]*\/>.*?w:line="(\d+)" w:lineRule="exact"/.exec(xml)!
+    expect(Number(p[1])).toBeGreaterThan(Number(p[2]) + 200)
   })
 })
 

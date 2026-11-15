@@ -94,8 +94,9 @@ function styledRun(r: StyleRun | DirectedRun, extra: Partial<IRunOptions>): Text
   const fonts = fontsFor(r)
   return new TextRun({
     text: r.text,
-    bold: r.bold,
-    boldComplexScript: r.bold,
+    // Bold as drawn: the run's, or its font's SemiBold and heavier (fonts.ts weightOf).
+    bold: fonts.latinBold,
+    boldComplexScript: fonts.arabicBold,
     italics: r.italic,
     italicsComplexScript: r.italic,
     size: half,
@@ -350,7 +351,9 @@ function framedBox(b: ParagraphBlock, tb: TextBox): Paragraph {
       type: 'absolute',
       position: { x: twips(Math.max(0, tb.left)), y: twips(Math.max(0, top)) },
       width: twips(tb.width),
-      height: twips(line * tb.lines.length),
+      // Room under the last line: Word clips a frame's text at its height, and the exact line leaves a
+      // fifth of it under the baseline — Dubai's final yeh lost its two dots ("في" read "فى").
+      height: twips(line * tb.lines.length + tb.size * 0.6),
       anchor: { horizontal: FrameAnchorType.PAGE, vertical: FrameAnchorType.PAGE },
       wrap: FrameWrap.NONE,
       rule: HeightRule.ATLEAST

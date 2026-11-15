@@ -29,16 +29,24 @@ export interface TextLine {
 
 const ARABIC_BASE_LETTER = /[\u0621-\u064A\u066E-\u06D3\u06FA-\u06FF]/
 
-/** Repairs ligature order in one line of glyphs, in place. */
+/**
+ * Repairs ligature order in one line of glyphs, in place. MuPDF gives a right-to-left ligature's
+ * letters reversed: those after the first at zero width, then the first with the glyph's width —
+ * lam-alef "لا" as "ال", the Allah ligature "الله" as "هللا". Each such group is turned back.
+ * Swapping only the last two read "عبدالله" as "عبدهلال".
+ */
 export function repairLigatureOrder(glyphs: Array<{ c: string; width: number }>): void {
   for (let i = 0; i + 1 < glyphs.length; i++) {
-    const a = glyphs[i]!
-    const b = glyphs[i + 1]!
-    if (a.width < 0.01 && b.width >= 0.01 && ARABIC_BASE_LETTER.test(a.c) && ARABIC_BASE_LETTER.test(b.c)) {
-      glyphs[i] = b
-      glyphs[i + 1] = a
-      i++
+    if (!(glyphs[i]!.width < 0.01 && ARABIC_BASE_LETTER.test(glyphs[i]!.c))) continue
+    let j = i
+    while (j + 1 < glyphs.length && glyphs[j + 1]!.width < 0.01 && ARABIC_BASE_LETTER.test(glyphs[j + 1]!.c)) j++
+    const wide = glyphs[j + 1]
+    // Up to three letters at zero width (the Allah ligature has the most); more is not a ligature.
+    if (wide && wide.width >= 0.01 && ARABIC_BASE_LETTER.test(wide.c) && j - i < 3) {
+      const group = glyphs.slice(i, j + 2).reverse()
+      glyphs.splice(i, group.length, ...group)
     }
+    i = j + 1
   }
 }
 

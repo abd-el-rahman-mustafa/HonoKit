@@ -3,6 +3,7 @@ import { free, mupdf, type PdfDoc } from '../mupdf'
 import { paragraphs, styledLines, type Paragraph, type StyledLine, type StyleRun } from '../paragraphs'
 import { foldString, UNMAPPED, unreadable, withoutUnmapped } from '../text'
 import { artPicture, placedPicture, regionPicture } from './art'
+import { asWestern, hasIndicDigits, westernDrawnFonts, type WesternDigits } from './digitshapes'
 import { pageDrawings, type Drawing } from './drawings'
 import type { Block, Box, DocModel, LineBlock, PageModel, ParagraphBlock, PictureBlock, ShapeBlock, TableBlock, TableCell } from './model'
 import { scene, type StyledGrid } from './scene'
@@ -27,6 +28,8 @@ export interface BuildOptions {
   art?: boolean
   /** Flowing writers: drawings with many parts (a chart, a logo) become pictures, their labels with them. */
   figures?: boolean
+  /** Set by buildModel (digits 'keep'): fonts that draw Arabic-Indic digit codes as Western digits (digitshapes.ts). */
+  westernDigits?: WesternDigits
 }
 
 interface Extras {
@@ -271,8 +274,13 @@ function paragraphBlock(p: Paragraph, options: BuildOptions): ParagraphBlock {
   // A soft hyphen the PDF drew at a line's end is a hyphen there (PowerPoint shows no soft hyphen,
   // and flowing text joins the word again only at a hyphen); anywhere else it is nothing.
   const soft = new RegExp(String.fromCharCode(0xad), 'g')
+  // Digits kept as the page shows them: Arabic-Indic codes a font draws as Western digits are Western.
+  const shown = (r: StyleRun): string => {
+    const marks = options.westernDigits?.get(r.font)
+    return marks ? asWestern(r.text, marks) : r.text
+  }
   const lineEnds = p.lines.map((line) => {
-    const runs = line.runs.map((r) => ({ ...r, text: r.text.replace(soft, '') }))
+    const runs = line.runs.map((r) => ({ ...r, text: shown(r).replace(soft, '') }))
     const last = runs[runs.length - 1]
     const original = line.runs[line.runs.length - 1]
     if (last && original && original.text.trimEnd().endsWith(String.fromCharCode(0xad))) last.text = last.text.trimEnd() + '-'
@@ -285,7 +293,7 @@ function paragraphBlock(p: Paragraph, options: BuildOptions): ParagraphBlock {
           runs: clean(line.runs.slice(line.marker.runs.length)),
           box: line.marker.textBox,
           baseline: line.baseline,
-          marker: { runs: clean(line.marker.runs), box: line.marker.box }
+          marker: { runs: clean(line.marker.runs.map((r) => ({ ...r, text: shown(r) }))), box: line.marker.box }
         }
       : { runs: clean(line.runs), box: line.box, baseline: line.baseline }
   )
@@ -618,6 +626,10 @@ export function buildModel(doc: PdfDoc, options: BuildOptions): DocModel {
     // Lines the file maps to nothing are left out of the text and come back as pictures (§68).
     return { index: p, geometry: pageGeometry(doc, p), lines: all.filter((l) => !pictureLine(l.text)), unreadable: all.filter((l) => pictureLine(l.text)) }
   })
+  if (options.digits === 'keep') {
+    const pages = pageLines.filter((pl) => pl.lines.some((l) => hasIndicDigits(l.text))).map((pl) => pl.index)
+    if (pages.length) options = { ...options, westernDigits: westernDrawnFonts(doc, pages) }
+  }
 
   // Running headers and footers: the same text in the top or bottom tenth of most pages.
   const seen = new Map<string, number>()

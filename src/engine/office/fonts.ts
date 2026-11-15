@@ -83,7 +83,8 @@ const keyOf = (family: string): string => compact(family).replace(/(regular|bold
 /** Installed families by compact name, and which scripts each has letters for. */
 let installed: Map<string, { family: string; latin: boolean; arabic: boolean } | null> | null = null
 
-function installedFamily(name: string): { family: string; latin: boolean; arabic: boolean } | null {
+/** The PDF family `name` as installed on this PC (by its compact name, style words aside), and which scripts it has letters for. */
+export function installedFamily(name: string): { family: string; latin: boolean; arabic: boolean } | null {
   installed ??= new Map()
   const key = keyOf(name)
   if (!key) return null
@@ -109,6 +110,47 @@ function installedFamily(name: string): { family: string; latin: boolean; arabic
 /** Stand-ins chosen by width for this document's families (learnFallbacks): Latin, and Arabic. */
 const learned = new Map<string, string>()
 const learnedArabic = new Map<string, string>()
+/** This document's body size (learnFallbacks): Arabic set well above it is a headline. */
+let bodySize = 0
+/** This document's families that set Arabic (learnFallbacks): their headline digits and Latin words take Dubai too. */
+const arabicFamilies = new Set<string>()
+
+/** Weight words in font names, the longer ones first ("ExtraLight" before "Light", "SemiBold" before "Bold"). */
+const WEIGHTS: Array<[RegExp, number]> = [
+  [/hairline|thin/, 100],
+  [/extralight|ultralight/, 200],
+  [/semilight|light/, 300],
+  [/semibold|demibold|demi/, 600],
+  [/extrabold|ultrabold/, 800],
+  [/black|heavy/, 900],
+  [/bold/, 700],
+  [/medium/, 500]
+]
+
+/**
+ * A run's weight, 100–900, from its font's name ("HED-SemiBold" 600, "NASFont-ExtraLight" 200);
+ * at least 700 for a run read as bold. A newspaper's headlines set in a SemiBold face are not read
+ * as bold, and came out in a thin regular stand-in.
+ */
+export function weightOf(r: Partial<Pick<StyleRun, 'font' | 'bold'>>): number {
+  const name = (r.font ?? '').replace(/^[A-Z]{6}\+/, '').toLowerCase()
+  const style = (name.includes('-') ? name.slice(name.lastIndexOf('-') + 1) : name).replace(/[^a-z]/g, '')
+  const w = WEIGHTS.find(([re]) => re.test(style))?.[1] ?? 400
+  return r.bold ? Math.max(700, w) : w
+}
+
+/**
+ * Dubai's face for a headline face's weight (Windows 10 and 11 have Light, Regular, Medium and Bold),
+ * a step heavier: display faces are heavier than their names say (a newspaper's "HED-Regular"
+ * kicker reads like Dubai Medium, its "HED-Medium" headlines like Dubai Bold).
+ */
+function dubaiFor(weight: number): { family: string; bold: boolean } | null {
+  const has = (f: string): boolean => systemFonts().has(f)
+  if (weight >= 500) return has('Dubai') ? { family: 'Dubai', bold: true } : null
+  if (weight >= 400 && has('Dubai Medium')) return { family: 'Dubai Medium', bold: false }
+  if (weight <= 200 && has('Dubai Light')) return { family: 'Dubai Light', bold: false }
+  return has('Dubai') ? { family: 'Dubai', bold: false } : null
+}
 
 /**
  * Fonts whose letters sit at private codes: Office draws Unicode text in them as other signs (a "®"
@@ -117,14 +159,26 @@ const learnedArabic = new Map<string, string>()
  */
 const SYMBOL_FONTS = /^(symbol|wingdings|webdings|zapfdingbats|dingbats|mtextra|marlett)/
 
-export function fontsFor(r: Pick<StyleRun, 'family' | 'kind'>): { latin: string; arabic: string } {
+/**
+ * The fonts Office draws a run in, Latin and Arabic, and whether each is bold: bold when the run is
+ * or its font's name says SemiBold or heavier (weightOf). Arabic headline type (well above the body
+ * size) in a family not installed here takes Dubai by its weight — a newspaper's headlines came out
+ * in a thin Naskh stand-in, far lighter than printed.
+ */
+export function fontsFor(r: Pick<StyleRun, 'family' | 'kind'> & Partial<Pick<StyleRun, 'font' | 'bold' | 'size'>>): { latin: string; arabic: string; latinBold: boolean; arabicBold: boolean } {
   const key = compact(r.family)
   const known = (table: Record<string, string>): string | undefined => table[key] ?? Object.entries(table).find(([k]) => key.startsWith(k))?.[1]
   const own = SYMBOL_FONTS.test(key) ? null : installedFamily(r.family)
+  const weight = weightOf(r)
   const latin = (own?.latin ? own.family : undefined) ?? learned.get(keyOf(r.family)) ?? known(LATIN) ?? defaultLatin(r.kind)
+  const heavy = weight >= 600
+  const headline = !own?.arabic && !SYMBOL_FONTS.test(key) && bodySize > 0 && (r.size ?? 0) >= bodySize * 1.3
+  const display = headline ? dubaiFor(weight) : null
+  // The headline's digits in Dubai with its letters: in Times New Roman, "1,2" stood thin beside a bold headline.
+  if (display) return own?.latin || !arabicFamilies.has(keyOf(r.family)) ? { latin, arabic: display.family, latinBold: heavy, arabicBold: display.bold } : { latin: display.family, arabic: display.family, latinBold: display.bold, arabicBold: display.bold }
   // Naskh-like Arabic (serif) reads best in Simplified Arabic; everything else in Arial, which every Windows has.
   const arabic = (own?.arabic ? own.family : undefined) ?? learnedArabic.get(keyOf(r.family)) ?? known(ARABIC_FAMILIES) ?? (r.kind === 'serif' ? 'Simplified Arabic' : 'Arial')
-  return { latin, arabic }
+  return { latin, arabic, latinBold: heavy, arabicBold: heavy }
 }
 
 const defaultLatin = (kind: StyleRun['kind']): string => (kind === 'serif' ? 'Times New Roman' : kind === 'mono' ? 'Courier New' : 'Arial')
@@ -214,7 +268,7 @@ export function drawnFamilies(r: Pick<StyleRun, 'family' | 'kind' | 'text'>): st
   return [...out]
 }
 
-type SampleRun = Pick<StyleRun, 'family' | 'kind' | 'bold' | 'italic' | 'size' | 'text' | 'tracking'>
+type SampleRun = Pick<StyleRun, 'family' | 'kind' | 'bold' | 'italic' | 'size' | 'text' | 'tracking'> & Partial<Pick<StyleRun, 'font'>>
 type Sample = { runs: SampleRun[]; width: number }
 
 /** Arabic fonts Windows has, by kind: the ones an Arabic family not installed may become. */
@@ -267,6 +321,12 @@ function nearest(lines: Sample[], usual: string, candidates: string[], widthOf: 
 export function learnFallbacks(samples: Sample[]): void {
   learned.clear()
   learnedArabic.clear()
+  // The body size (the size most letters have): Arabic well above it takes Dubai (fontsFor).
+  const sizes = new Map<number, number>()
+  for (const s of samples) for (const r of s.runs) sizes.set(Math.round(r.size * 2) / 2, (sizes.get(Math.round(r.size * 2) / 2) ?? 0) + r.text.replace(/\s/g, '').length)
+  bodySize = [...sizes].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0
+  arabicFamilies.clear()
+  for (const s of samples) for (const r of s.runs) if (ARABIC.test(r.text)) arabicFamilies.add(keyOf(r.family))
   const latinBy = new Map<string, { kind: StyleRun['kind']; lines: Sample[] }>()
   const arabicBy = new Map<string, { first: SampleRun; lines: Sample[] }>()
   for (const s of samples) {
@@ -278,7 +338,8 @@ export function learnFallbacks(samples: Sample[]): void {
     if (text.trim().length < 8) continue
     const own = installedFamily(first.family)
     if (ARABIC.test(text)) {
-      if (own?.arabic) continue
+      // Headline lines take Dubai: only body lines say how wide the family's stand-in should be.
+      if (own?.arabic || first.size >= bodySize * 1.3) continue
       const entry = arabicBy.get(key) ?? { first, lines: [] }
       entry.lines.push(s)
       arabicBy.set(key, entry)
@@ -294,7 +355,7 @@ export function learnFallbacks(samples: Sample[]): void {
     const latinWidth = (l: Sample, family: string): number | null => {
       let total = 0
       for (const r of l.runs) {
-        const w = widthIn(r.text, family, r.bold, r.italic, r.size, false)
+        const w = widthIn(r.text, family, weightOf(r) >= 600, r.italic, r.size, false)
         if (w === null) return null
         total += w
       }
@@ -311,7 +372,7 @@ export function learnFallbacks(samples: Sample[]): void {
       for (const r of l.runs)
         for (const piece of r.text.replace(FORMAT, '').match(SCRIPTS) ?? []) {
           const arabic = ARABIC.test(piece)
-          const w = widthIn(piece, arabic ? family : fonts.latin, r.bold, r.italic, r.size, arabic)
+          const w = widthIn(piece, arabic ? family : fonts.latin, weightOf(r) >= 600, r.italic, r.size, arabic)
           if (w === null) return null
           total += w
         }

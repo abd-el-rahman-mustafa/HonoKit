@@ -262,11 +262,22 @@ function StepOptions({ step, onChange }: { step: BatchStep; onChange: (s: BatchS
           {step.format === 'docx' && (
             <Select
               compact
-              value={step.layout ?? 'exact'}
+              value={step.layout === 'flow' ? 'flow' : 'exact'}
               onChange={(layout) => onChange({ ...step, layout })}
               options={[
                 { value: 'exact', label: t('convert.layoutExact') },
                 { value: 'flow', label: t('convert.layoutFlow') }
+              ]}
+            />
+          )}
+          {step.format === 'pptx' && (
+            <Select
+              compact
+              value={step.layout === 'deck' ? 'deck' : 'exact'}
+              onChange={(layout) => onChange({ ...step, layout })}
+              options={[
+                { value: 'exact', label: t('convert.layoutExact') },
+                { value: 'deck', label: t('convert.layoutDeck') }
               ]}
             />
           )}

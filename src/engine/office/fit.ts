@@ -17,7 +17,7 @@ import type { LineBlock, ParagraphBlock } from './model'
 const FORMAT = /\p{Cf}/gu
 
 /** Office's width of `text` in the run's style, in points; null when no font to measure it with. */
-export function textWidth(text: string, r: Pick<StyleRun, 'family' | 'kind' | 'bold' | 'italic' | 'size'>): number | null {
+export function textWidth(text: string, r: Pick<StyleRun, 'family' | 'kind' | 'bold' | 'italic' | 'size'> & Partial<Pick<StyleRun, 'font'>>): number | null {
   const clean = text.replace(FORMAT, '')
   if (!clean) return 0
   const fonts = fontsFor(r)
@@ -25,7 +25,7 @@ export function textWidth(text: string, r: Pick<StyleRun, 'family' | 'kind' | 'b
   // Script by script: Arabic letters (and what lies between them) in the Arabic font, the rest in the Latin one.
   for (const piece of clean.match(SCRIPTS) ?? []) {
     const arabic = ARABIC.test(piece)
-    const w = widthIn(piece, arabic ? fonts.arabic : fonts.latin, r.bold, r.italic, r.size, arabic)
+    const w = widthIn(piece, arabic ? fonts.arabic : fonts.latin, arabic ? fonts.arabicBold : fonts.latinBold, r.italic, r.size, arabic)
     if (w === null) return null
     width += w
   }

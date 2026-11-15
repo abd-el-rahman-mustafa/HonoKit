@@ -895,7 +895,7 @@ export async function runSmoke(window: BrowserWindow, openFiles: (paths: string[
       if (await clickIn('[data-global-bar]', labels.convert ?? 'Convert')) {
         await wait(800)
         await shot('28-convert')
-        for (const format of ['docx', 'docx flow', 'xlsx', 'pptx', 'md']) {
+        for (const format of ['docx', 'docx flow', 'xlsx', 'pptx', 'pptx deck', 'md']) {
           const kind = format.split(' ')[0]!
           await js(`document.querySelectorAll('[data-convert-formats] button[role=radio]')[${['docx', 'xlsx', 'pptx', 'md', 'txt'].indexOf(kind)}]?.click()`)
           await wait(200)
@@ -909,12 +909,22 @@ export async function runSmoke(window: BrowserWindow, openFiles: (paths: string[
             await js("document.querySelectorAll('[data-select-list] [role=option]')[1]?.click()")
             await wait(300)
           }
+          if (format === 'pptx deck') {
+            // PowerPoint's second layout (§123): "Make a presentation", with its "Text on the slides" list.
+            if (existsSync(join(out, 'sample.pptx'))) renameSync(join(out, 'sample.pptx'), join(out, 'sample-exact.pptx'))
+            await js("document.querySelector('[data-tool-panel] button[aria-haspopup=listbox]')?.click()")
+            await wait(300)
+            await shot('28c-convert-slides-layout')
+            await js("document.querySelectorAll('[data-select-list] [role=option]')[1]?.click()")
+            await wait(300)
+            await shot('28d-convert-presentation')
+          }
           await js("document.querySelector('[data-tool-footer] button.bg-accent')?.click()")
           await wait(4000)
           const file = join(out, `sample.${kind}`)
-          const exact = join(out, 'sample-exact.docx')
-          // The flowing file has no frames or page backgrounds: far smaller than the exact one.
-          const differs = format === 'docx flow' && existsSync(file) && existsSync(exact) ? `, ${Math.abs(statSync(file).size - statSync(exact).size) > 1000 ? 'differs from' : 'SAME AS'} keep-the-look` : ''
+          const exact = join(out, `sample-exact.${kind}`)
+          // The flowing file has no frames or page backgrounds, the deck is built anew: neither is the keep-the-look file.
+          const differs = (format === 'docx flow' || format === 'pptx deck') && existsSync(file) && existsSync(exact) ? `, ${Math.abs(statSync(file).size - statSync(exact).size) > 1000 ? 'differs from' : 'SAME AS'} keep-the-look` : ''
           steps.push(`convert ${format}: ${existsSync(file) ? `${statSync(file).size} bytes${differs}` : 'missing'}`)
         }
         await js("document.querySelector('[data-tool-footer] button')?.click()")

@@ -1,6 +1,7 @@
 import { PdfError } from '../errors'
-import { free, openPdf } from '../mupdf'
+import { free, mupdf, openPdf } from '../mupdf'
 import { buildModel, type BuildOptions } from './build'
+import { writeDeck } from './deck'
 import { writeDocx } from './docx'
 import type { StyleRun } from '../paragraphs'
 import { learnFallbacks } from './fonts'
@@ -21,8 +22,13 @@ export interface ExportOptions extends BuildOptions {
   format: OfficeFormat
   /** Word: start every PDF page on a new page (flowing text). */
   pageBreaks: boolean
-  /** Word: keep the look of each page (default) or flowing text (docx.ts). */
-  layout?: 'exact' | 'flow'
+  /**
+   * Word: keep the look of each page (default) or flowing text (docx.ts). PowerPoint: keep the look
+   * (a slide like each page, pptx.ts) or 'deck', a presentation made from the stories (deck.ts).
+   */
+  layout?: 'exact' | 'flow' | 'deck'
+  /** PowerPoint 'deck': every word on the slides (default), or each story's opening paragraph with the rest in the notes. */
+  slideText?: 'all' | 'opening'
   /** Markdown: the folder name (beside the file) for its pictures. */
   pictureFolder: string
   /** Excel: a sheet per page, or a sheet per ruled table. */
@@ -54,11 +60,35 @@ function fontSamples(model: DocModel): Array<{ runs: StyleRun[]; width: number }
   return paragraphs.flatMap((b) => (b.alignment === 'justify' ? b.lines.slice(-1) : b.lines).map((l) => ({ runs: l.runs, width: l.box[2] - l.box[0] })))
 }
 
+/** A page as a picture (the deck's contents slide): JPEG, about 1400 pixels on its long side. */
+function coverOf(bytes: Uint8Array, index: number, password?: string): { data: Uint8Array; width: number; height: number } | null {
+  const doc = openPdf(bytes, password)
+  let page: ReturnType<typeof doc.loadPage> | null = null
+  let pixmap: mupdf.Pixmap | null = null
+  try {
+    if (index < 0 || index >= doc.countPages()) return null
+    page = doc.loadPage(index)
+    const b = page.getBounds()
+    const width = b[2] - b[0]
+    const height = b[3] - b[1]
+    const k = Math.min(3, 1400 / Math.max(1, width, height))
+    pixmap = page.toPixmap(mupdf.Matrix.scale(k, k), mupdf.ColorSpace.DeviceRGB, false, true)
+    return { data: new Uint8Array(pixmap.asJPEG(85)), width, height }
+  } catch {
+    return null
+  } finally {
+    free(pixmap, page, doc)
+  }
+}
+
 export async function exportOffice(bytes: Uint8Array, options: ExportOptions, password?: string): Promise<ExportResult> {
   const layout = options.layout ?? 'exact'
+  const deck = options.format === 'pptx' && layout === 'deck'
   // Writers that place things where they were take the page's drawings (art); flowing ones its charts as pictures.
-  const art = options.format === 'pptx' || (options.format === 'docx' && layout === 'exact')
-  const model = modelOf(bytes, { ...options, art, figures: !art && (options.format === 'docx' || options.format === 'md') }, password)
+  const art = (options.format === 'pptx' && !deck) || (options.format === 'docx' && layout === 'exact')
+  // Slides are not justified: the tatweel that stretched Arabic words to justify the PDF's lines goes.
+  const removeTatweel = options.removeTatweel || deck
+  const model = modelOf(bytes, { ...options, removeTatweel, art, figures: !art && (options.format === 'docx' || options.format === 'md' || deck) }, password)
   if (options.format === 'xlsx') {
     const doc = openPdf(bytes, password)
     try {
@@ -84,12 +114,16 @@ export async function exportOffice(bytes: Uint8Array, options: ExportOptions, pa
   if (stats.paragraphs + stats.tables + stats.pictures + shapes === 0) {
     throw new PdfError('unsupported', 'No text or pictures were found. A scanned PDF needs text recognition (OCR) first.')
   }
-  if (options.format === 'docx' || options.format === 'pptx') learnFallbacks(fontSamples(model))
+  if (options.format === 'docx' || (options.format === 'pptx' && !deck)) learnFallbacks(fontSamples(model))
   switch (options.format) {
     case 'docx':
-      return { bytes: await writeDocx(model, { layout, pageBreaks: options.pageBreaks }), extra: [], ...stats }
-    case 'pptx':
-      return { bytes: await writePptx(model), extra: [], ...stats }
+      return { bytes: await writeDocx(model, { layout: layout === 'flow' ? 'flow' : 'exact', pageBreaks: options.pageBreaks }), extra: [], ...stats }
+    case 'pptx': {
+      if (!deck) return { bytes: await writePptx(model), extra: [], ...stats }
+      const made = await writeDeck(model, { text: options.slideText ?? 'all', cover: coverOf(bytes, options.pages?.[0] ?? 0, password) })
+      if (made.stories === 0) throw new PdfError('unsupported', 'No text or pictures to make slides from were found. Choose "Keep the look" instead.')
+      return { bytes: made.bytes, extra: [], ...stats }
+    }
     case 'md': {
       const rtl = model.pages.some((p) => p.blocks.some((b) => b.kind === 'paragraph' && b.rtl))
       const md = writeMarkdown(model, options.pictureFolder, rtl)

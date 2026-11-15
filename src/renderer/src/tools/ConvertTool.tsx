@@ -27,6 +27,9 @@ export function ConvertTool({ view, initial = 'docx' }: { view: DocView; initial
   const [format, setFormat] = useState<Format>(initial)
   const [pageBreaks, setPageBreaks] = useState(false)
   const [layout, setLayout] = useState<'exact' | 'flow'>('exact')
+  // PowerPoint: a slide like each page, or a presentation made from the stories (§123).
+  const [slideLayout, setSlideLayout] = useState<'exact' | 'deck'>('exact')
+  const [slideText, setSlideText] = useState<'all' | 'opening'>('all')
   const [removeTatweel, setRemoveTatweel] = useState(true)
   const [digits, setDigits] = useState<'keep' | 'western' | 'arabic'>('keep')
   const [openAfter, setOpenAfter] = useState(true)
@@ -35,7 +38,7 @@ export function ConvertTool({ view, initial = 'docx' }: { view: DocView; initial
     const path = await window.api.pickExportPath(view.info.name, format)
     if (!path) return
     const r = await runBusy(t('convert.working'), () =>
-      window.api.exportOffice(view.info.id, { format, pages: scope.pages ?? (scope.scope === 'all' ? null : scope.preview), pageBreaks, layout, removeTatweel, digits, sheets }, path)
+      window.api.exportOffice(view.info.id, { format, pages: scope.pages ?? (scope.scope === 'all' ? null : scope.preview), pageBreaks, layout: format === 'pptx' ? slideLayout : layout, slideText, removeTatweel, digits, sheets }, path)
     )
     if (!r) return
     if (openAfter) void window.api.openConverted(r.path)
@@ -91,6 +94,30 @@ export function ConvertTool({ view, initial = 'docx' }: { view: DocView; initial
           </Field>
         )}
         {format === 'docx' && layout === 'flow' && <Check checked={pageBreaks} onChange={setPageBreaks} label={t('convert.pageBreaks')} hint={t('convert.pageBreaksHint')} />}
+        {format === 'pptx' && (
+          <Field label={t('convert.layout')}>
+            <Select
+              value={slideLayout}
+              onChange={setSlideLayout}
+              options={[
+                { value: 'exact', label: t('convert.layoutExact'), hint: t('convert.layoutExactHint') },
+                { value: 'deck', label: t('convert.layoutDeck'), hint: t('convert.layoutDeckHint') }
+              ]}
+            />
+          </Field>
+        )}
+        {format === 'pptx' && slideLayout === 'deck' && (
+          <Field label={t('convert.slideText')}>
+            <Select
+              value={slideText}
+              onChange={setSlideText}
+              options={[
+                { value: 'all', label: t('convert.slideTextAll'), hint: t('convert.slideTextAllHint') },
+                { value: 'opening', label: t('convert.slideTextOpening'), hint: t('convert.slideTextOpeningHint') }
+              ]}
+            />
+          </Field>
+        )}
         {format === 'xlsx' && (
           <Field label={t('convert.sheets')}>
             <Select
@@ -103,7 +130,8 @@ export function ConvertTool({ view, initial = 'docx' }: { view: DocView; initial
             />
           </Field>
         )}
-        <Check checked={removeTatweel} onChange={setRemoveTatweel} label={t('convert.tatweel')} hint={t('convert.tatweelHint')} />
+        {/* A presentation always drops the tatweel that justified the PDF's lines (slides are not justified). */}
+        {!(format === 'pptx' && slideLayout === 'deck') && <Check checked={removeTatweel} onChange={setRemoveTatweel} label={t('convert.tatweel')} hint={t('convert.tatweelHint')} />}
         <Field label={t('digits')}>
           <Select
             value={digits}
