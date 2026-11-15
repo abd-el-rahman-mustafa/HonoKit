@@ -461,9 +461,13 @@ function corners(b: Box): PathOp[] {
  * Draws the chosen operations of a page again into `target` (an SVG writer's page, a picture),
  * moved by `m`: only those, with the clips, groups and masks they are drawn under. No text.
  */
-export function replay(doc: PdfDoc, pageIndex: number, calls: Set<number>, target: mupdf.Device, m: mupdf.Matrix): void {
+export function replay(doc: PdfDoc, pageIndex: number, calls: Set<number>, target: mupdf.Device, m: mupdf.Matrix, flatten = false): void {
   const page = doc.loadPage(pageIndex)
   let call = 0
+  // With `flatten`, a plain group (normal blending, opaque, no knockout) is drawn straight onto the
+  // ground, as it looks the same: MuPDF draws it on a transparent layer of its own, where a picture's
+  // soft mask failed and the picture came out solid black (replayPixmap).
+  const plain: boolean[] = []
   const at = (ctm: mupdf.Matrix): mupdf.Matrix => mupdf.Matrix.concat(ctm, m)
   const rect = (r: mupdf.Rect): mupdf.Rect => mupdf.Rect.transform(r, m)
   // Inside a pattern's cell: everything is drawn when the pattern is (one operation, as read).
@@ -522,10 +526,12 @@ export function replay(doc: PdfDoc, pageIndex: number, calls: Set<number>, targe
       pass(() => target.endMask())
     },
     beginGroup(area, cs, isolated, knockout, blendmode, alpha) {
-      pass(() => target.beginGroup(rect(area), cs, isolated, knockout, blendmode, alpha))
+      const skip = flatten && !knockout && blendmode === 'Normal' && alpha >= 0.999
+      plain.push(skip)
+      if (!skip) pass(() => target.beginGroup(rect(area), cs, isolated, knockout, blendmode, alpha))
     },
     endGroup() {
-      pass(() => target.endGroup())
+      if (!plain.pop()) pass(() => target.endGroup())
     },
     beginTile(area, view, xstep, ystep, ctm, id, docId) {
       if (tileDepth++ === 0) tileKept = calls.has(call++)
@@ -569,19 +575,66 @@ export function replaySvg(doc: PdfDoc, pageIndex: number, calls: Set<number>, bo
   }
 }
 
-/** The chosen operations as a picture of `box` on a transparent ground, `scale` pixels a point. */
+/**
+ * The chosen operations as a picture of `box` on a transparent ground, `scale` pixels a point.
+ *
+ * Drawn twice, on white and on black, and each pixel's cover and colour worked out from the two
+ * (cover = 1 − (white − black), colour = black ÷ cover): MuPDF drawing straight onto a transparent
+ * ground painted a picture with a soft mask solid black — a newspaper's page-wide watermark, at most
+ * 7 % opaque on the page, came out as an opaque black sheet over the whole Word and PowerPoint page.
+ */
 export function replayPixmap(doc: PdfDoc, pageIndex: number, calls: Set<number>, box: Box, scale: number): mupdf.Pixmap {
-  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, Math.max(1, Math.ceil((box[2] - box[0]) * scale)), Math.max(1, Math.ceil((box[3] - box[1]) * scale))], true)
-  pixmap.clear(0)
-  const device = new mupdf.DrawDevice(mupdf.Matrix.identity, pixmap)
+  const size: mupdf.Rect = [0, 0, Math.max(1, Math.ceil((box[2] - box[0]) * scale)), Math.max(1, Math.ceil((box[3] - box[1]) * scale))]
+  const m = mupdf.Matrix.concat(mupdf.Matrix.translate(-box[0], -box[1]), mupdf.Matrix.scale(scale, scale))
+  const onGround = (ground: number): mupdf.Pixmap => {
+    const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, size, false)
+    pixmap.clear(ground)
+    const device = new mupdf.DrawDevice(mupdf.Matrix.identity, pixmap)
+    try {
+      replay(doc, pageIndex, calls, device, m, true)
+      device.close()
+      return pixmap
+    } catch (error) {
+      free(pixmap)
+      throw error
+    } finally {
+      free(device)
+    }
+  }
+  let white: mupdf.Pixmap | null = null
+  let black: mupdf.Pixmap | null = null
+  const out = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, size, true)
   try {
-    replay(doc, pageIndex, calls, device, mupdf.Matrix.concat(mupdf.Matrix.translate(-box[0], -box[1]), mupdf.Matrix.scale(scale, scale)))
-    device.close()
-    return pixmap
+    white = onGround(255)
+    black = onGround(0)
+    // Every pixel is written below: MuPDF's clear(value) would leave the alpha opaque.
+    const w = white.getPixels()
+    const k = black.getPixels()
+    const o = out.getPixels()
+    const width = out.getWidth()
+    const height = out.getHeight()
+    const ws = white.getStride()
+    const os = out.getStride()
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++) {
+        const i = y * ws + x * 3
+        const j = y * os + x * 4
+        const cover = 255 - Math.min(255, Math.max(0, (w[i]! - k[i]! + w[i + 1]! - k[i + 1]! + w[i + 2]! - k[i + 2]!) / 3))
+        if (cover <= 0) {
+          o[j] = o[j + 1] = o[j + 2] = o[j + 3] = 0
+          continue
+        }
+        // The draw device keeps colours premultiplied by their cover: k is colour × cover already.
+        o[j] = Math.min(k[i]!, cover)
+        o[j + 1] = Math.min(k[i + 1]!, cover)
+        o[j + 2] = Math.min(k[i + 2]!, cover)
+        o[j + 3] = cover
+      }
+    return out
   } catch (error) {
-    free(pixmap)
+    free(out)
     throw error
   } finally {
-    free(device)
+    free(white, black)
   }
 }

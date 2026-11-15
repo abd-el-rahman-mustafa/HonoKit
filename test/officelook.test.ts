@@ -327,7 +327,56 @@ describe('PDF to Office: keeping the look', () => {
       image.destroy()
     }
   })
+
+  it('keeps a faint watermark faint on a page set in a transparency group', async () => {
+    // An e-paper page: its content in an isolated group, a page-wide faint watermark (an image with a
+    // soft mask) drawn last. It came out as an opaque black sheet over the whole slide.
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([400, 600])
+    page.node.set(PDFName.of('Group'), pdf.context.obj({ Type: 'Group', S: 'Transparency', I: true, CS: 'DeviceRGB' }))
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    for (let i = 0; i < 12; i++) page.drawText(`A line of the story under the watermark, number ${i + 1}.`, { x: 40, y: 540 - i * 18, size: 11, font })
+    page.drawImage(await pdf.embedPng(makeWatermarkPng(200, 300)), { x: 0, y: 0, width: 400, height: 600 })
+    const r = await exportOffice(new Uint8Array(await pdf.save()), { ...BASE, format: 'pptx' })
+    expect(await slide(r.bytes)).toContain('number 12.')
+    const zip = await JSZip.loadAsync(r.bytes)
+    const media = Object.keys(zip.files).filter((n) => n.startsWith('ppt/media/') && !zip.files[n]!.dir)
+    expect(media.length).toBeGreaterThan(0)
+    for (const name of media) {
+      const image = new mupdf.Image(await zip.file(name)!.async('uint8array'))
+      const pixmap = image.toPixmap()
+      try {
+        const px = pixmap.getPixels()
+        const n = pixmap.getNumberOfComponents()
+        expect(n).toBe(4)
+        let cover = 0
+        for (let i = 3; i < px.length; i += n) cover += px[i]!
+        // Its own cover: a quarter of the pixels at 40 of 255.
+        expect(cover / (px.length / n)).toBeLessThan(20)
+      } finally {
+        pixmap.destroy()
+        image.destroy()
+      }
+    }
+  })
 })
+
+/** A grey watermark: diagonal stripes at 40 of 255 cover, transparent between them. */
+function makeWatermarkPng(width: number, height: number): Uint8Array {
+  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, width, height], true)
+  const px = pixmap.getPixels()
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      const on = (x + y) % 16 < 4
+      // Premultiplied, as MuPDF keeps an alpha pixmap: grey 128 at cover 40.
+      px[i] = px[i + 1] = px[i + 2] = on ? 20 : 0
+      px[i + 3] = on ? 40 : 0
+    }
+  const png = new Uint8Array(pixmap.asPNG())
+  pixmap.destroy()
+  return png
+}
 
 /** A PNG whose left half is transparent (black underneath) and right half red. */
 function makeRgbaPng(width: number, height: number): Uint8Array {
