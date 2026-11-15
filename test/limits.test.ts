@@ -195,4 +195,34 @@ describe('Word export', () => {
     expect(tooWide).toContain('r0c0')
     expect(tooWide).toContain('r1c69')
   })
+
+  it('keeps a page with nothing on it as a page when each PDF page starts a new one', async () => {
+    const words = (text: string): ParagraphBlock => ({
+      kind: 'paragraph',
+      box: [60, 60, 300, 80],
+      runs: [{ text, size: 11, colour: [0, 0, 0], bold: false, italic: false, kind: 'sans', family: 'Helvetica', font: 'Helvetica' }],
+      lines: [],
+      rtl: false,
+      alignment: 'start',
+      heading: 0,
+      list: null,
+      marker: '',
+      lineHeight: 1.2,
+      firstIndent: 0
+    })
+    const page = (...blocks: ParagraphBlock[]) => ({ width: 595, height: 842, blocks, rtl: false, drawn: [] })
+    const breaks = async (pages: Array<ReturnType<typeof page>>, pageBreaks = true): Promise<number> => {
+      const docx = await writeDocx({ pages, header: null, footer: null, bodySize: 11 }, { layout: 'flow', pageBreaks })
+      const xml = await (await JSZip.loadAsync(docx)).file('word/document.xml')!.async('string')
+      return (xml.match(/<w:pageBreakBefore\b/g) ?? []).length
+    }
+    // Every page after the first starts a new one, whether or not it has text.
+    expect(await breaks([page(words('one')), page(words('two')), page(words('three'))])).toBe(2)
+    expect(await breaks([page(words('one')), page(), page(words('three'))])).toBe(2)
+    expect(await breaks([page(), page(), page(words('three'))])).toBe(2)
+    expect(await breaks([page(words('one')), page(), page()])).toBe(2)
+    expect(await breaks([page(), page(), page()])).toBe(2)
+    // Flowing on (the default): no page of its own for anything.
+    expect(await breaks([page(words('one')), page(), page(words('three'))], false)).toBe(0)
+  })
 })

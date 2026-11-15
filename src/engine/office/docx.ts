@@ -197,6 +197,8 @@ function flowing(model: DocModel, options: DocxOptions): ISectionOptions[] {
   const contentWidth = first.width - left - right
   const children: Array<Paragraph | Table> = []
   model.pages.forEach((page, pi) => {
+    // A page with nothing to write is still a page: later pages keep their numbers.
+    if (options.pageBreaks && pi > 0 && page.blocks.length === 0) children.push(new Paragraph({ pageBreakBefore: true }))
     page.blocks.forEach((b: Block, bi) => {
       const breakHere = options.pageBreaks && pi > 0 && bi === 0
       if (b.kind === 'paragraph') children.push(paragraph(b, breakHere))
