@@ -33,7 +33,9 @@ export interface RedactHit {
 export type RedactPattern = 'email' | 'phone' | 'emiratesId' | 'iban' | 'card' | 'date'
 
 const PATTERNS: Record<RedactPattern, RegExp> = {
-  email: /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu,
+  // The name may hold an apostrophe (o'brien, typeset or not) but not start with one, so a quote
+  // before the address stays outside and no part of the name stays readable.
+  email: /[\p{L}\p{N}._%+-][\p{L}\p{N}._%+'’-]*@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu,
   // UAE numbers (+971 / 00971 / 0 then 5x or a landline code), and other international numbers
   // (+ or 00, groups split by spaces, dashes or dots), taken whole so no part stays readable.
   // A phone number is a whole run of digit groups: one reached through a separator from a digit

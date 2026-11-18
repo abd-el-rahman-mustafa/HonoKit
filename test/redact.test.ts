@@ -31,6 +31,21 @@ function text(bytes: Uint8Array): string {
 }
 
 describe('redaction', () => {
+  it('takes an email address whole when its name has an apostrophe, and leaves quotes around it', async () => {
+    const pdf = await PDFDocument.create()
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    const page = pdf.addPage([500, 300])
+    const lines = ["Write to o'brien@example.com today", "or to 'john'@example.org now", "or 'sara@example.net' please", 'or d’souza@example.ae too']
+    lines.forEach((l, i) => page.drawText(l, { x: 30, y: 250 - i * 30, size: 12, font }))
+    const doc = openPdf(new Uint8Array(await pdf.save()))
+    try {
+      const found = findToRedact(doc, { words: [], patterns: ['email'], wholeWords: true }).map((h) => h.text)
+      expect(found).toEqual(["o'brien@example.com", "john'@example.org", 'sara@example.net', 'd’souza@example.ae'])
+    } finally {
+      free(doc)
+    }
+  })
+
   it('finds words and every pattern, and skips numbers that are not card numbers', async () => {
     const doc = openPdf(await sample())
     try {
