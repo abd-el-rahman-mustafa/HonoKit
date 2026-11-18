@@ -214,11 +214,21 @@ export class Sessions {
     return rendered
   }
 
-  search(id: string, query: string, options: { matchCase?: boolean; wholeWords?: boolean } = {}): SearchHit[] {
+  /**
+   * Find: page by page, letting other requests in between pages (another tab's pictures, Stop),
+   * so a long document never holds the engine. Stopped, or the document changed meanwhile:
+   * 'cancelled'.
+   */
+  async search(id: string, query: string, options: { matchCase?: boolean; wholeWords?: boolean } = {}, signal?: AbortSignal): Promise<SearchHit[]> {
     const s = this.get(id)
+    const doc = s.doc
     const hits: SearchHit[] = []
-    const count = s.doc.countPages()
-    for (let p = 0; p < count && hits.length < 1000; p++) hits.push(...searchLines(extractLines(s.doc, p), query, p, 1000 - hits.length, options))
+    const count = doc.countPages()
+    for (let p = 0; p < count && hits.length < 1000; p++) {
+      if (p > 0) await new Promise<void>((resolve) => setImmediate(resolve))
+      if (signal?.aborted || s.doc !== doc || !this.sessions.has(id)) throw new PdfError('cancelled', 'Cancelled.')
+      hits.push(...searchLines(extractLines(doc, p), query, p, 1000 - hits.length, options))
+    }
     return hits
   }
 

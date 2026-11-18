@@ -123,7 +123,7 @@ export async function applyOperation(bytes: Uint8Array, input: OpInput, ctx: OpC
   if (ctx.signal?.aborted) throw new PdfError('cancelled', 'Cancelled.')
   assertAllowed(op.op, rightsFor(bytes, ctx.password))
   ctx.progress?.(0, op.op)
-  const result = await run(bytes, op, ctx.password, ctx.progress)
+  const result = await run(bytes, op, ctx.password, ctx.progress, ctx.signal)
   ctx.progress?.(1, op.op)
   return result
 }
@@ -141,7 +141,7 @@ function rgbOf(hex: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
 }
 
-async function run(bytes: Uint8Array, op: Op, password: string | undefined, progress?: OpContext['progress']): Promise<OpResult> {
+async function run(bytes: Uint8Array, op: Op, password: string | undefined, progress?: OpContext['progress'], signal?: AbortSignal): Promise<OpResult> {
   switch (op.op) {
     case 'rotate':
       return { bytes: rotatePages(bytes, op.pages, op.angle, password) }
@@ -245,7 +245,7 @@ async function run(bytes: Uint8Array, op: Op, password: string | undefined, prog
     }
     case 'ocr': {
       const { recogniseText } = await import('@engine/ocr')
-      const r = await recogniseText(bytes, { ...(op.pages ? { pages: op.pages } : {}), language: op.language, redo: op.redo }, password, progress)
+      const r = await recogniseText(bytes, { ...(op.pages ? { pages: op.pages } : {}), language: op.language, redo: op.redo, ...(signal ? { signal } : {}) }, password, progress)
       return { bytes: r.bytes, note: r.pages === 0 ? { key: 'note.ocrNothing' } : { key: 'note.ocr', values: { pages: r.pages, lines: r.lines, skipped: r.skipped } } }
     }
     case 'replaceAll': {

@@ -162,6 +162,7 @@ export function TitleBar({ view }: { view: DocView | null }) {
   const docs = useStore((s) => s.docs)
   const pictures = useStore((s) => s.pictures)
   const active = useStore((s) => s.active)
+  const jobs = useStore((s) => s.jobs)
   return (
     <div className="@container flex h-10 shrink-0 items-center gap-1 bg-bg px-2" data-title-bar="">
       <AppMenu view={view} />
@@ -198,6 +199,11 @@ export function TitleBar({ view }: { view: DocView | null }) {
               <button type="button" className="min-w-0 flex-1 truncate text-start" dir="auto" onClick={() => useStore.setState({ active: id })} title={d ? (d.info.path ?? d.info.name) : picture!.path} data-tab={picture ? 'picture' : 'pdf'}>
                 {name}
               </button>
+              {jobs[id] && (
+                <span className="flex shrink-0" title={jobs[id]} data-tab-working="">
+                  <Spinner size={12} />
+                </span>
+              )}
               {d?.info.dirty && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" title={t('unsavedDot')} />}
               <button type="button" title={t('close')} aria-label={t('close')} className="rounded p-0.5 text-faint hover:bg-surface-2 hover:text-ink" onClick={() => void closeDoc(id)}>
                 <X size={14} />
@@ -269,7 +275,12 @@ function FindBox({ view }: { view: DocView }) {
           }}
         />
         {busy ? (
-          <Spinner size={14} />
+          <>
+            <Spinner size={14} />
+            <button type="button" title={t('search.stop')} aria-label={t('search.stop')} className="rounded-full p-1 text-muted hover:bg-surface-2 hover:text-ink" onClick={() => void runSearch(view.info.id, '')} data-stop-search="">
+              <X size={13} />
+            </button>
+          </>
         ) : query ? (
           <span className="text-[11px] whitespace-nowrap text-muted tabular-nums">{hits.length ? t('searchResults', { index: index + 1, count: hits.length }) : t('noResults')}</span>
         ) : null}

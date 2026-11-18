@@ -24,6 +24,7 @@ const api: PowerApi & { updateState(): Promise<UpdateState> } = {
   version: argument('powerpdf-version'),
   platform: process.platform,
   system: argument('powerpdf-system'),
+  opening: argument('powerpdf-opening') === '1',
 
   open: call('open'),
   fileThumbnail: call('fileThumbnail'),
@@ -37,6 +38,7 @@ const api: PowerApi & { updateState(): Promise<UpdateState> } = {
   startDragOut: (path: string) => ipcRenderer.send(IPC.dragOut, path),
   authorize: call('authorize'),
   search: call('search'),
+  stop: call('stop'),
   pageText: call('pageText'),
   selectText: call('selectText'),
   copyText: call('copyText'),

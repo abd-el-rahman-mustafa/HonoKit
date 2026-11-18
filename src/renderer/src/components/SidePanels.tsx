@@ -9,7 +9,7 @@ import { apply, deletePagesAsking, goToDestination, goToPage, openTool, openWebL
 import { openMenu, useMenuOpen } from './ContextMenu'
 import { pageEntries } from './menus'
 import { PageCheck } from './Organizer'
-import { PageImage } from './ui'
+import { Button, PageImage } from './ui'
 
 /** A panel that slides in between the pages and the right rail (Acrobat's side panels). */
 /** A side panel; in the reader (§75) it opens at the start side, where readers keep thumbnails. */
@@ -446,7 +446,13 @@ function SearchHits({ view }: { view: DocView }) {
   const t = useT()
   const { hits, index, query, busy } = view.search
   if (!query) return <p className="p-4 text-[12px] leading-relaxed text-muted">{t('searchPanelHint')}</p>
-  if (busy) return <p className="p-4 text-[12px] text-muted">{t('searching')}</p>
+  if (busy)
+    return (
+      <div className="flex items-center gap-3 p-4 text-[12px] text-muted">
+        <span className="flex-1">{t('searching')}</span>
+        <Button onClick={() => void runSearch(view.info.id, '')}>{t('job.stop')}</Button>
+      </div>
+    )
   if (!hits.length) return <p className="p-4 text-[12px] text-muted">{t('noResults')}</p>
   // One row per page, with how many matches it has.
   const pages = [...new Set(hits.map((h) => h.page))]

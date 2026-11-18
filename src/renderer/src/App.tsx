@@ -12,6 +12,7 @@ import { ContextMenu, menuIsOpen } from './components/ContextMenu'
 import { Home } from './components/Home'
 import { Organizer } from './components/Organizer'
 import { Busy, Dialogs, Toasts, UpdateBanner } from './components/Overlays'
+import { Spinner } from './components/ui'
 import { BatchView } from './components/BatchView'
 import { CompareView } from './components/CompareView'
 import { EditFormatBar } from './components/EditFormatBar'
@@ -45,7 +46,8 @@ function useShortcuts(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const s = useStore.getState()
-      if (s.dialog || s.busy || modalIsOpen()) return
+      // While the engine works — on the whole window, or on the document in front — keys wait too.
+      if (s.dialog || s.busy || (s.active && s.jobs[s.active]) || modalIsOpen()) return
       const view = activeView()
       const mod = e.ctrlKey || e.metaKey
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement
@@ -210,6 +212,7 @@ export function App() {
   const picture = useStore((s) => (s.active ? (s.pictures[s.active] ?? null) : null))
   const settings = useStore((s) => s.settings)
   const tool = useStore((s) => s.tool)
+  const opening = useStore((s) => s.opening)
   // Combine files and Images to PDF have views of their own over the whole window.
   const scanning = !!tool && SCAN_TOOLS.includes(tool)
   const combining = tool === 'merge' || tool === 'imagesToPdf' || tool === 'compare' || tool === 'batch' || scanning || isImageTool(tool)
@@ -226,7 +229,7 @@ export function App() {
         <ToolPanel />
         {reading && <SidePanel view={view} start />}
         <main className="relative flex min-w-0 flex-1 flex-col">
-          {scanning ? <ScanView key={tool} goal={tool as ScanGoal} /> : isImageTool(tool) ? tool === 'imgEditor' ? <PhotoEditor /> : <ImageToolView key={tool} tool={tool} /> : tool === 'imagesToPdf' ? <ImagesView /> : tool === 'compare' ? <CompareView /> : tool === 'batch' ? <BatchView /> : combining ? <CombineView /> : view ? view.mode === 'organize' ? <Organizer view={view} /> : <Canvas view={view} /> : picture ? <PictureViewer key={picture.id} picture={picture} /> : <Home />}
+          {scanning ? <ScanView key={tool} goal={tool as ScanGoal} /> : isImageTool(tool) ? tool === 'imgEditor' ? <PhotoEditor /> : <ImageToolView key={tool} tool={tool} /> : tool === 'imagesToPdf' ? <ImagesView /> : tool === 'compare' ? <CompareView /> : tool === 'batch' ? <BatchView /> : combining ? <CombineView /> : view ? view.mode === 'organize' ? <Organizer view={view} /> : <Canvas view={view} /> : picture ? <PictureViewer key={picture.id} picture={picture} /> : opening !== null ? <Opening name={opening} /> : <Home />}
         </main>
         {view && !combining && !reading && <SidePanel view={view} />}
         {view && !combining && !reading && <RightRail view={view} />}
@@ -243,6 +246,21 @@ export function App() {
       <ContextMenu />
       <Toasts />
       <Busy />
+    </div>
+  )
+}
+
+/** A file on its way (a double-click in Explorer, Open…): its name, not Home, until its tab is there. */
+function Opening({ name }: { name: string }) {
+  const t = useT()
+  return (
+    <div className="flex flex-1 items-center justify-center bg-sunken" data-opening="">
+      <div className="flex max-w-[min(32rem,90%)] items-center gap-3 rounded-xl border border-line bg-surface px-5 py-4 shadow-lg" role="status">
+        <Spinner size={18} />
+        <span className="min-w-0 truncate text-[14px]" dir="auto">
+          {name ? t('job.opening', { name }) : t('working')}
+        </span>
+      </div>
     </div>
   )
 }

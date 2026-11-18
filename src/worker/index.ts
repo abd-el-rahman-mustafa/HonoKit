@@ -26,17 +26,39 @@ if (process.env.POWERPDF_RESOURCES) setFontDirectory(`${process.env.POWERPDF_RES
 const sessions = new Sessions()
 const port = process.parentPort
 
-function progress(task: string) {
-  return (fraction: number, message?: string): void => port.postMessage({ progress: { task, fraction, message } })
+function progress(task: string, doc?: string) {
+  return (fraction: number, message?: string): void => port.postMessage({ progress: { task, fraction, message, ...(doc ? { doc } : {}) } })
+}
+
+/**
+ * Work that can be stopped, by key ("apply:<doc>", "search:<doc>"): Stop in the window aborts it.
+ * The work notices between pages (and, in Recognize text, between lines) and fails 'cancelled';
+ * the document stays as it was. A new search on a document stops the one before it.
+ */
+const running = new Map<string, AbortController>()
+async function stoppable<T>(key: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  running.get(key)?.abort()
+  const controller = new AbortController()
+  running.set(key, controller)
+  try {
+    return await work(controller.signal)
+  } finally {
+    if (running.get(key) === controller) running.delete(key)
+  }
 }
 
 const methods: Record<string, (...args: never[]) => unknown> = {
   open: (path: string, password?: string) => sessions.openFile(path, password),
   fileThumbnail: (path: string, width: number) => sessions.fileThumbnail(path, width),
-  close: (id: string) => sessions.close(id),
+  close: (id: string) => {
+    running.get(`apply:${id}`)?.abort()
+    running.get(`search:${id}`)?.abort()
+    sessions.close(id)
+  },
   info: (id: string) => sessions.info(id),
   render: (id: string, revision: number, page: number, scale: number, size?: [number, number]) => sessions.render(id, revision, page, scale, size),
-  search: (id: string, query: string, options: { matchCase?: boolean; wholeWords?: boolean }) => sessions.search(id, query, options),
+  search: (id: string, query: string, options: { matchCase?: boolean; wholeWords?: boolean }) => stoppable(`search:${id}`, (signal) => sessions.search(id, query, options, signal)),
+  cancel: (key: string) => void running.get(key)?.abort(),
   pageText: (id: string, page: number) => sessions.pageText(id, page),
   selectText: (id: string, page: number, from: never, to: never, unit: never) => sessions.selectText(id, page, from, to, unit),
   preview: (id: string, op: never, page: number, scale: number) => sessions.preview(id, op, page, scale),
@@ -48,7 +70,7 @@ const methods: Record<string, (...args: never[]) => unknown> = {
   pageMarkups: (id: string, page: number) => sessions.pageMarkups(id, page),
   outline: (id: string) => sessions.outline(id),
   pageLinks: (id: string, page: number) => sessions.pageLinks(id, page),
-  apply: (id: string, op: never) => sessions.apply(id, op, { progress: progress('apply') }),
+  apply: (id: string, op: never) => stoppable(`apply:${id}`, (signal) => sessions.apply(id, op, { progress: progress('apply', id), signal })),
   undo: (id: string) => sessions.undo(id),
   redo: (id: string) => sessions.redo(id),
   authorize: (id: string, password: string) => sessions.authorize(id, password),

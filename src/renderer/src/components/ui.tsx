@@ -487,21 +487,24 @@ export function PageImage({ docId, revision, page, width, height, pointsWide, cl
   const dpr = usePixelRatio()
   const scale = scaleFor(width / Math.max(1, pointsWide), dpr)
   const sharp = exact ? exactPixels(width, height, pointsWide, dpr) : null
-  if (sharp)
-    return (
-      <img
-        alt=""
-        draggable={false}
-        loading="lazy"
-        decoding="async"
-        className={clsx('block bg-white', className)}
-        style={{ width: sharp.cssWidth, height: sharp.cssHeight }}
-        src={pageUrl(docId, revision, page, scale, sharp.size)}
-        data-exact=""
-      />
-    )
-  return <img alt="" draggable={false} loading="lazy" decoding="async" className={clsx('block bg-white', className)} style={{ width, height }} src={pageUrl(docId, revision, page, scale)} />
+  const src = sharp ? pageUrl(docId, revision, page, scale, sharp.size) : pageUrl(docId, revision, page, scale)
+  // Until this picture has come, the one last shown for the page stays behind it (another zoom,
+  // the version before a change, the tab left a moment ago), so a big scan never goes blank.
+  const key = `${docId}/${page}`
+  const [loaded, setLoaded] = useState<string | null>(null)
+  const behind = loaded === src ? undefined : lastShown.get(key)
+  const style = { ...(sharp ? { width: sharp.cssWidth, height: sharp.cssHeight } : { width, height }), ...(behind ? { backgroundImage: `url("${behind}")`, backgroundSize: '100% 100%' } : {}) }
+  const onLoad = (): void => {
+    setLoaded(src)
+    lastShown.delete(key)
+    lastShown.set(key, src)
+    while (lastShown.size > 600) lastShown.delete(lastShown.keys().next().value!)
+  }
+  return <img alt="" draggable={false} loading="lazy" decoding="async" className={clsx('block bg-white', className)} style={style} src={src} onLoad={onLoad} {...(sharp ? { 'data-exact': '' } : {})} />
 }
+
+/** Each page's picture last shown, by document and page (most recent last). */
+const lastShown = new Map<string, string>()
 
 /** A titled group in a panel: Acrobat's small UPPERCASE section headings. */
 export function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {

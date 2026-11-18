@@ -1,7 +1,8 @@
-import { PDFDocument, popGraphicsState, pushGraphicsState, setTextRenderingMode, TextRenderingMode } from 'pdf-lib'
+import { PDFDocument, popGraphicsState, pushGraphicsState, rgb, setCharacterSqueeze, setTextRenderingMode, TextRenderingMode, type PDFPage } from 'pdf-lib'
 import { detectDirection } from '../bidi'
+import { PdfError } from '../errors'
 import { free, mupdf, openPdf, saveBytes } from '../mupdf'
-import { drawLine, FontSet, measureLine, pageFrame, placeOverlay, type Frame } from '../stamp'
+import { FontSet, measureLine, pageFrame, placeOverlay, type Frame } from '../stamp'
 import { extractLines } from '../text'
 import { cropImage, openOcr, type OcrEngine, type Reading, type RgbaImage } from './engine'
 
@@ -18,6 +19,8 @@ export interface OcrOptions {
   language: 'auto' | 'ar' | 'en'
   /** Also pages that already have text (their old layer stays; used rarely). */
   redo: boolean
+  /** Stop: checked after each line; the document is left as it was. */
+  signal?: AbortSignal
 }
 
 /** A page counts as having text when it has more than this many letters or digits. */
@@ -143,6 +146,7 @@ export async function recogniseText(bytes: Uint8Array, options: OcrOptions, pass
     const frames: Frame[] = []
     let lines = 0
     for (const [i, pageIndex] of todo.entries()) {
+      if (options.signal?.aborted) throw new PdfError('cancelled', 'Cancelled.')
       progress?.(i / todo.length, `${i + 1}/${todo.length}`)
       const frame = pageFrame(doc, pageIndex)
       const scale = DPI / 72
@@ -163,22 +167,49 @@ export async function recogniseText(bytes: Uint8Array, options: OcrOptions, pass
       const sheet = overlay.addPage([frame.width, frame.height])
       // Invisible text (render mode 3): there to be found and selected, not seen.
       sheet.pushOperators(pushGraphicsState(), setTextRenderingMode(TextRenderingMode.Invisible))
-      for (const box of await engine.detectLines(image)) {
+      const boxes = await engine.detectLines(image, () => !!options.signal?.aborted)
+      if (options.signal?.aborted) throw new PdfError('cancelled', 'Cancelled.')
+      for (const [n, box] of boxes.entries()) {
+        // Line by line: a newspaper page has hundreds, so the bar moves on one page too.
+        if (n % 8 === 0) progress?.((i + n / boxes.length) / todo.length, `${i + 1}/${todo.length}`)
         if (box.h < 8 || box.w < 12) continue
-        const reading = await readLine(engine, cropImage(image, box.x, box.y, box.w, box.h), options.language)
+        if (options.signal?.aborted) throw new PdfError('cancelled', 'Cancelled.')
+        const lineImage = cropImage(image, box.x, box.y, box.w, box.h)
+        const reading = await readLine(engine, lineImage, options.language)
         const text = reading.text.replace(/\s+/g, ' ').trim()
         if (!text || reading.confidence < 0.5) continue
         // Pixels → points on the page as displayed.
-        const x0 = box.x / scale
         const top = box.y / scale
-        const bw = box.w / scale
         const bh = box.h / scale
-        let size = bh * 0.72
-        const natural = (await measureLine(fonts, text, size, false)).width
-        if (natural > bw) size *= bw / natural
-        const rtl = detectDirection(text) === 'rtl'
-        await drawLine(fonts, sheet, text, { x: rtl ? x0 + bw : x0, y: frame.height - (top + bh * 0.78), alignX: rtl ? 1 : 0, centreY: false }, { size, bold: false, colour: '#000000', opacity: 1, rotation: 0 })
+        const size = bh * 0.72
+        const baseline = frame.height - (top + bh * 0.78)
+        // Each word over its own place in the picture, stretched to it, so Find and selection mark
+        // the word itself (a line set in our font drifts off the scan's words, worst on stretched
+        // Arabic). When the gaps in the picture do not match the words, the line as a whole.
+        const words = text.split(' ')
+        const spans = wordSpans(lineImage, words.length)
+        const toPoints = (s: Span): Span => ({ left: (box.x + s.left) / scale, right: (box.x + s.right) / scale })
+        if (spans) {
+          // Spans run left to right; the words are written in reading order (so copied text
+          // reads right), each at the span it shows in.
+          const order = visualOrder(words, detectDirection(text))
+          const at = (i: number): Span => toPoints(spans[order.indexOf(i)]!)
+          for (const [i, word] of words.entries()) {
+            const span = at(i)
+            await drawFitted(fonts, sheet, word, span, baseline, size)
+            // The space, in the gap between this word and the next one read, so the text keeps its word breaks.
+            if (i + 1 < words.length) {
+              const next = at(i + 1)
+              const gap = next.left >= span.right ? { left: span.right, right: next.left } : { left: next.right, right: span.left }
+              await drawFitted(fonts, sheet, ' ', gap, baseline, size)
+            }
+          }
+        } else {
+          const ink = wordSpans(lineImage, 1)?.[0] ?? { left: 0, right: box.w }
+          await drawFitted(fonts, sheet, text, toPoints(ink), baseline, size)
+        }
         lines++
+        if (options.signal?.aborted) throw new PdfError('cancelled', 'Cancelled.')
       }
       sheet.pushOperators(popGraphicsState())
       frames.push(frame)
@@ -191,4 +222,115 @@ export async function recogniseText(bytes: Uint8Array, options: OcrOptions, pass
     await engine?.release()
     free(doc)
   }
+}
+
+/** A stretch of a line, in pixels of the line picture (or points, once converted). */
+interface Span {
+  left: number
+  right: number
+}
+
+/**
+ * Where the `count` words of a line are in its picture: the ink is found column by column, and
+ * the widest `count − 1` gaps are the word breaks (gaps inside an Arabic word, between letters
+ * that do not join, are narrower than a space). Null when the line has fewer clear gaps than
+ * that, or they are too narrow to be spaces: the caller then places the line as a whole.
+ */
+function wordSpans(line: RgbaImage, count: number): Span[] | null {
+  const { data, width, height } = line
+  if (width < 2 || height < 2) return null
+  // Dark against light: Otsu's threshold over the line's grey levels.
+  const grey = new Uint8Array(width * height)
+  const histogram = new Array<number>(256).fill(0)
+  for (let i = 0; i < width * height; i++) {
+    const g = (data[i * 4]! * 299 + data[i * 4 + 1]! * 587 + data[i * 4 + 2]! * 114) / 1000
+    grey[i] = g
+    histogram[grey[i]!]!++
+  }
+  const total = width * height
+  let sum = 0
+  for (let g = 0; g < 256; g++) sum += g * histogram[g]!
+  let below = 0
+  let belowSum = 0
+  let best = 0
+  let threshold = 128
+  for (let g = 0; g < 256; g++) {
+    below += histogram[g]!
+    if (below === 0) continue
+    const above = total - below
+    if (above === 0) break
+    belowSum += g * histogram[g]!
+    const between = below * above * (belowSum / below - (sum - belowSum) / above) ** 2
+    if (between > best) {
+      best = between
+      threshold = g
+    }
+  }
+  // A column has ink when a few of its pixels are dark (a speck of dust is not a letter).
+  const least = Math.max(1, Math.round(height * 0.04))
+  const inked: boolean[] = []
+  for (let x = 0; x < width; x++) {
+    let dark = 0
+    for (let y = 0; y < height; y++) if (grey[y * width + x]! <= threshold) dark++
+    inked.push(dark >= least)
+  }
+  const first = inked.indexOf(true)
+  const last = inked.lastIndexOf(true)
+  if (first < 0) return null
+  if (count === 1) return [{ left: first, right: last + 1 }]
+  const gaps: Span[] = []
+  for (let x = first; x <= last; x++) {
+    if (inked[x]) continue
+    const start = x
+    while (x <= last && !inked[x]) x++
+    gaps.push({ left: start, right: x })
+  }
+  if (gaps.length < count - 1) return null
+  const breaks = [...gaps].sort((a, b) => b.right - b.left - (a.right - a.left)).slice(0, count - 1)
+  // A space is at least about a sixth of the line's height; narrower, and the words are not where we think.
+  if (breaks.some((g) => g.right - g.left < height * 0.15)) return null
+  breaks.sort((a, b) => a.left - b.left)
+  const spans: Span[] = []
+  let left = first
+  for (const gap of breaks) {
+    spans.push({ left, right: gap.left })
+    left = gap.right
+  }
+  spans.push({ left, right: last + 1 })
+  return spans
+}
+
+/**
+ * The words' order from left to right as the line shows them: an Arabic line runs right to left,
+ * but a run of Latin words or numbers inside it keeps its own left-to-right order (and the other
+ * way round in a Latin line). Indexes into `words`.
+ */
+function visualOrder(words: string[], base: 'ltr' | 'rtl'): number[] {
+  const rtl = (w: string): boolean => (/[\p{L}\p{N}]/u.test(w) ? detectDirection(w) === 'rtl' : base === 'rtl')
+  const groups: number[][] = []
+  for (const [i, w] of words.entries()) {
+    const last = groups[groups.length - 1]
+    if (last && rtl(words[last[0]!]!) === rtl(w)) last.push(i)
+    else groups.push([i])
+  }
+  const shown = groups.map((g) => (rtl(words[g[0]!]!) ? [...g].reverse() : g))
+  return (base === 'rtl' ? shown.reverse() : shown).flat()
+}
+
+/**
+ * Invisible text set over `span` (points), squeezed or stretched to fill it exactly (the
+ * horizontal scaling, Tz), on `baseline`.
+ */
+async function drawFitted(fonts: FontSet, sheet: PDFPage, text: string, span: Span, baseline: number, size: number): Promise<void> {
+  const line = await measureLine(fonts, text, size, false)
+  const width = span.right - span.left
+  if (line.runs.length === 0 || line.width <= 0 || width <= 0) return
+  const stretch = width / line.width
+  sheet.pushOperators(pushGraphicsState(), setCharacterSqueeze(stretch * 100))
+  let dx = 0
+  for (const run of line.runs) {
+    sheet.drawText(run.text, { x: span.left + dx * stretch, y: baseline, size, font: run.font, color: rgb(0, 0, 0) })
+    dx += run.width
+  }
+  sheet.pushOperators(popGraphicsState())
 }

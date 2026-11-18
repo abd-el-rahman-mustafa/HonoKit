@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { Bug, CheckCircle2, Cloud, CodeXml, Download, FileText, FileWarning, FolderOpen, FolderPlus, HardDrive, Save, Globe, Info, Keyboard, Monitor, Moon, Palette, RefreshCw, Scale, ShieldCheck, Sun, X, XCircle } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BRAND, problemReportUrl } from '@shared/brand'
-import { changeSettings, closeDoc, dismissToast, save, saveWillCopy, setDialog, t, useStore, useT, type Dialog } from '../store'
+import { changeSettings, closeDoc, dismissToast, save, saveWillCopy, setDialog, stopJob, t, useStore, useT, type Dialog } from '../store'
 import type { Place } from '@shared/ipc'
 import type { Key } from '../i18n'
 import { Logo } from './Home'
@@ -730,33 +730,51 @@ export function UpdateBanner() {
   )
 }
 
-/** Covers the window while the engine works, so nothing is changed half-way. */
+/**
+ * Covers the window while the engine works, so nothing is changed half-way. A change to one
+ * document (Recognize text…) covers only that document, below the tabs, with Stop: another tab
+ * can be used meanwhile, and coming back shows the work still going.
+ */
 export function Busy() {
   const t = useT()
   const busy = useStore((s) => s.busy)
+  const active = useStore((s) => s.active)
+  const job = useStore((s) => (s.active ? s.jobs[s.active] : undefined))
   const progress = useStore((s) => s.progress)
+  const label = busy ?? job ?? null
   const [visible, setVisible] = useState(false)
   // Quick operations should not flash a screen; show it only after a moment.
   useEffect(() => {
-    if (!busy) return setVisible(false)
+    if (!label) return setVisible(false)
     const timer = setTimeout(() => setVisible(true), 250)
     return () => clearTimeout(timer)
-  }, [busy])
-  if (!busy) return null
+  }, [label])
+  if (!label) return null
+  // A document's own work leaves the tabs free; the window-wide kind covers everything.
+  const own = !busy && !!job && !!active
+  const top = own ? (document.querySelector('[data-title-bar]')?.getBoundingClientRect().bottom ?? 0) : 0
+  const shown = progress && (!progress.doc || progress.doc === active) ? progress : null
   return (
-    <div className={clsx('fixed inset-0 z-40 flex items-center justify-center transition-colors', visible ? 'bg-black/20' : 'bg-transparent')}>
+    <div className={clsx('fixed inset-x-0 bottom-0 z-40 flex items-center justify-center transition-colors', visible ? 'bg-black/20' : 'bg-transparent')} style={{ top }} data-busy={own ? 'doc' : 'window'}>
       {visible && (
-        <div className="flex min-w-64 flex-col gap-3 rounded-xl border border-line bg-surface p-5 shadow-2xl">
+        <div className="flex w-72 flex-col gap-3 rounded-xl border border-line bg-surface p-5 shadow-2xl" role="status">
           <div className="flex items-center gap-3">
             <Spinner size={20} />
-            <span className="text-[14px] font-medium">{busy}</span>
+            <span className="min-w-0 flex-1 truncate text-[14px] font-medium">{label}</span>
           </div>
-          {progress && progress.fraction > 0 && progress.fraction < 1 ? (
+          {shown && shown.fraction > 0 && shown.fraction < 1 ? (
             <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-              <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(progress.fraction * 100)}%` }} />
+              <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(shown.fraction * 100)}%` }} />
             </div>
           ) : (
             <span className="text-[12px] text-muted">{t('working')}</span>
+          )}
+          {own && (
+            <div className="flex justify-end">
+              <Button onClick={() => stopJob(active)} data-stop-job="">
+                {t('job.stop')}
+              </Button>
+            </div>
           )}
         </div>
       )}

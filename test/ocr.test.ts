@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { embedFace } from '@engine/fonts'
 import { free, mupdf, openPdf } from '@engine/mupdf'
-import { extractText, foldString } from '@engine/text'
+import { extractLines, extractText, foldString, searchLines } from '@engine/text'
 import { applyOperation } from '@ops/index'
 
 /** A "scan": a page of text turned into a picture, with no text layer. */
@@ -79,6 +79,58 @@ describe('recognise text (OCR)', () => {
     expect(new TextDecoder('latin1').decode(legacy)).not.toContain('HonoOcr')
     const again = await applyOperation(legacy, { op: 'ocr', redo: true })
     expect(count(again.bytes, 'invoice')).toBe(1)
+  }, 120_000)
+
+  it('puts each word over its own place in the picture, so Find marks the word itself', async () => {
+    const r = await applyOperation(await makeScan(), { op: 'ocr' })
+    const doc = openPdf(r.bytes)
+    try {
+      const lines = extractLines(doc, 0)
+      const box = (word: string): [number, number, number, number] => {
+        const hit = searchLines(lines, word, 0)[0]
+        expect(hit, word).toBeDefined()
+        const b = hit!.boxes
+        return [Math.min(...b.map((q) => q[0])), Math.min(...b.map((q) => q[1])), Math.max(...b.map((q) => q[2])), Math.max(...b.map((q) => q[3]))]
+      }
+      // "amount" in "Total amount due 1250 AED", Helvetica 20 at x 60.
+      const src = await PDFDocument.create()
+      const font = await src.embedFont(StandardFonts.Helvetica)
+      const left = 60 + font.widthOfTextAtSize('Total ', 20)
+      const right = left + font.widthOfTextAtSize('amount', 20)
+      const amount = box('amount')
+      expect(Math.abs(amount[0] - left)).toBeLessThan(4)
+      expect(Math.abs(amount[2] - right)).toBeLessThan(4)
+      // The Arabic line, right-aligned at 535: its first word is the one on the right.
+      const arabic = await embedFace(src, 'arabic')
+      const line = 'فاتورة ضريبية للشركة'
+      const start = 535 - arabic.widthOfTextAtSize(line, 24)
+      const first = box('فاتورة')
+      const last = box('للشركة')
+      expect(first[0]).toBeGreaterThan(last[2])
+      expect(Math.abs(first[2] - 535)).toBeLessThan(5)
+      expect(Math.abs(last[0] - start)).toBeLessThan(5)
+      // Word breaks are kept: the phrase is found as typed.
+      expect(searchLines(lines, 'total amount due', 0)).toHaveLength(1)
+      expect(searchLines(lines, 'ضريبية للشركة', 0)).toHaveLength(1)
+    } finally {
+      free(doc)
+    }
+  }, 120_000)
+
+  it('stops when asked, leaving nothing half done', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    await expect(applyOperation(await makeScan(), { op: 'ocr' }, { signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled' })
+    const { recogniseText } = await import('@engine/ocr')
+    const late = new AbortController()
+    let stopped = false
+    const run = recogniseText(await makeScan(), { language: 'auto', redo: false, signal: late.signal }, undefined, () => {
+      if (!stopped) {
+        stopped = true
+        late.abort()
+      }
+    })
+    await expect(run).rejects.toMatchObject({ code: 'cancelled' })
   }, 120_000)
 
   it('keeps a page’s real text when recognising it again', async () => {

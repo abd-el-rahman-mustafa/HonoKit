@@ -371,6 +371,8 @@ export interface Progress {
   task: string
   fraction: number
   message?: string
+  /** The document the work is for (a change made with apply). */
+  doc?: string
 }
 
 export interface ShareFile {
@@ -397,6 +399,8 @@ export type MergeItem = { path: string; password?: string } | { docId: string }
 
 export interface PowerApi {
   version: string
+  /** Started with files to open (a double-click in Explorer): the window shows "Opening…", not Home. */
+  opening: boolean
   platform: string
   /** The computer's system, as a problem report names it (systemLabel in shared/brand.ts). */
   system: string
@@ -421,6 +425,8 @@ export interface PowerApi {
   authorize(id: string, password: string): Promise<Result<DocInfo>>
   /** Finds a phrase (Arabic letter forms folded; case folded unless asked; whole words if asked). */
   search(id: string, query: string, options?: { matchCase?: boolean; wholeWords?: boolean }): Promise<Result<SearchHit[]>>
+  /** Stop: a document's running change (Recognize text…) or its Find; the document stays as it was. */
+  stop(id: string, what: 'apply' | 'search'): Promise<Result<void>>
   pageText(id: string, page: number): Promise<Result<TextLineInfo[]>>
   /** The text between two points of a page, as a text selection (unit: drag, double or triple click). */
   selectText(id: string, page: number, from: [number, number], to: [number, number], unit: 'char' | 'word' | 'line' | 'page'): Promise<Result<TextSelection | null>>

@@ -141,7 +141,8 @@ function withSpaces(chars: DecodedChar[]): string {
 }
 
 export interface OcrEngine {
-  detectLines(image: RgbaImage): Promise<TextBox[]>
+  /** `stopped`: checked between bands of a tall page; true ends the search for lines early (the caller then stops). */
+  detectLines(image: RgbaImage, stopped?: () => boolean): Promise<TextBox[]>
   read(line: RgbaImage, recogniser: Recogniser): Promise<Reading>
   release(): Promise<void>
 }
@@ -165,10 +166,11 @@ export async function openOcr(threads = 4): Promise<OcrEngine> {
     return outputs[model.outputNames[0]!]!
   }
   return {
-    async detectLines(image) {
+    async detectLines(image, stopped) {
       const model = await session(OCR_MODELS.detector, false)
       const found: TextBox[] = []
       for (let top = 0; top < image.height; top += DETECT_BAND - DETECT_OVERLAP) {
+        if (stopped?.()) break
         const bandHeight = Math.min(DETECT_BAND, image.height - top)
         const band: RgbaImage = { data: image.data.subarray(top * image.width * 4, (top + bandHeight) * image.width * 4), width: image.width, height: bandHeight }
         const width = Math.ceil(image.width / 32) * 32

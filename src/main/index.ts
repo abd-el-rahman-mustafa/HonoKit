@@ -263,6 +263,7 @@ const handlers: Record<string, (...args: unknown[]) => unknown> = {
   },
   save: (docId, path) => worker.call('save', id.parse(docId), path === undefined ? undefined : savePath.parse(path)).then(remember),
   authorize: (docId, password) => worker.call('authorize', id.parse(docId), z.string().min(1).max(127).parse(password)),
+  stop: (docId, what) => worker.call('cancel', `${z.enum(['apply', 'search']).parse(what)}:${id.parse(docId)}`),
   search: (docId, query, options) => worker.call('search', id.parse(docId), z.string().max(500).parse(query), z.object({ matchCase: z.boolean().optional(), wholeWords: z.boolean().optional() }).optional().parse(options) ?? {}),
   pageText: (docId, page) => worker.call('pageText', id.parse(docId), z.number().int().min(0).parse(page)),
   selectText: (docId, page, from, to, unit) =>
@@ -796,7 +797,7 @@ function createWindow(): void {
       sandbox: true,
       spellcheck: false,
       backgroundThrottling: !smokeFolder,
-      additionalArguments: [`--powerpdf-version=${app.getVersion()}`, `--powerpdf-system=${systemLabel(process.platform, process.getSystemVersion())}`]
+      additionalArguments: [`--powerpdf-version=${app.getVersion()}`, `--powerpdf-system=${systemLabel(process.platform, process.getSystemVersion())}`, `--powerpdf-opening=${pendingFiles.length ? 1 : 0}`]
     }
   })
 
@@ -806,7 +807,8 @@ function createWindow(): void {
     rendererReady = true
     if (pendingFiles.length) send(IPC.openFiles, pendingFiles.splice(0))
     send(IPC.update, updater.current())
-    if (first && smokeFolder && window) void runSmoke(window, (paths) => openFiles(requestsIn(paths)))
+    // POWERPDF_SMOKE_MANUAL: the smoke profile without the scripted run, for driving the app by hand or over DevTools.
+    if (first && smokeFolder && window && !process.env.POWERPDF_SMOKE_MANUAL) void runSmoke(window, (paths) => openFiles(requestsIn(paths)))
   })
   // The interface never navigates, and never opens windows; links to the project open in the browser.
   window.webContents.on('will-navigate', (event) => event.preventDefault())

@@ -242,6 +242,13 @@ interface State {
   panelOpen: boolean
   progress: Progress | null
   busy: string | null
+  /**
+   * Changes running on a document (Recognize text…), by document: the Working box covers only that
+   * document's tab, with Stop; the other tabs stay free to use meanwhile.
+   */
+  jobs: Record<string, string>
+  /** A file being opened (its name): shown in place of Home until its tab is there. */
+  opening: string | null
   toasts: Toast[]
   dialog: Dialog | null
   /** Home's page (Recent, PDF tools, Image tools, a place): a tool closed returns to it (§77). */
@@ -262,6 +269,8 @@ export const useStore = create<State>(() => ({
   panelOpen: true,
   progress: null,
   busy: null,
+  jobs: {},
+  opening: window.api.opening ? '' : null,
   toasts: [],
   dialog: null,
   homeSection: 'recent'
@@ -457,6 +466,11 @@ export async function initialise(): Promise<void> {
   const waiting = early
   early = null
   if (waiting.length) void openRequested(waiting)
+  // Started with files whose request has not come yet: "Opening…" waits a little for it, not for ever.
+  else if (get().opening !== null)
+    setTimeout(() => {
+      if (get().opening === '') set({ opening: null })
+    }, 4000)
   window.api.onProgress((progress) => set({ progress }))
   window.api.onUpdate((update) => set({ update }))
   // The window is closing with unsaved documents: the app asks, in its own dialog.
@@ -471,7 +485,7 @@ export async function initialise(): Promise<void> {
   })
   window.api.onEngineRestarted(() => {
     // Pictures are read again as they are shown; only the documents are gone.
-    set((s) => ({ docs: {}, order: s.order.filter((id) => s.pictures[id]), active: null, tool: null, busy: null, progress: null }))
+    set((s) => ({ docs: {}, order: s.order.filter((id) => s.pictures[id]), active: null, tool: null, busy: null, jobs: {}, progress: null }))
     reportUnsaved()
     toast('error', t('engineRestarted'))
   })
@@ -560,6 +574,14 @@ export async function requestPassword(path: string, wrong = false): Promise<stri
  * ("Edit with HonoKit") it goes straight to the editor instead.
  */
 export async function openPaths(paths: string[], thenTool: ToolId | null = null, edit = false): Promise<void> {
+  try {
+    await openEach(paths, thenTool, edit)
+  } finally {
+    set({ opening: null })
+  }
+}
+
+async function openEach(paths: string[], thenTool: ToolId | null, edit: boolean): Promise<void> {
   for (const path of paths) {
     // A file that is open already comes to the front, as in Acrobat, instead of opening twice
     // (two tabs of one file would each save over the other's changes).
@@ -571,6 +593,8 @@ export async function openPaths(paths: string[], thenTool: ToolId | null = null,
       continue
     }
     let password: string | undefined
+    // The file's name in place of Home (or the page in front) while it opens: a big scan takes a moment.
+    set({ opening: nameOf(path) })
     for (let attempt = 0; ; attempt++) {
       const result = await window.api.open(path, password)
       if (result.ok) {
@@ -607,9 +631,13 @@ export async function openWithPicker(thenTool: ToolId | null = null): Promise<vo
 
 /** What the operating system handed over: PDFs to the reader, pictures to the picture viewer (§75). */
 async function openRequested(requests: OpenRequest[]): Promise<void> {
-  for (const r of requests) {
-    if (r.kind === 'image') await openPicture(r.path, r.edit)
-    else await openPaths([r.path], null, r.edit)
+  try {
+    for (const r of requests) {
+      if (r.kind === 'image') await openPicture(r.path, r.edit)
+      else await openPaths([r.path], null, r.edit)
+    }
+  } finally {
+    set({ opening: null })
   }
 }
 
@@ -805,18 +833,36 @@ export async function apply(id: string, op: OpInput, label: string): Promise<App
   if (op.op === 'markup' && !op.author) op = { ...op, author: get().settings?.authorName || undefined }
   // Any other change first takes in what is being typed in a form field: the change gives the
   // document a new revision, which would otherwise redraw the field without the typing (§82).
+  // One change at a time on a document: two would each start from the same version.
+  if (get().jobs[id]) {
+    toast('info', t('job.wait'))
+    return undefined
+  }
   if (op.op !== 'fillForm') await commitTyping(id)
   const run = async (): Promise<Result<ApplyResult>> => window.api.apply(id, op)
-  set({ busy: label })
+  const job = (on: boolean): void =>
+    set((s) => {
+      const jobs = { ...s.jobs }
+      if (on) jobs[id] = label
+      else delete jobs[id]
+      return { jobs }
+    })
+  job(true)
   try {
     let result = await run()
     if (!result.ok && result.error.code === 'restricted') {
-      set({ busy: null })
+      job(false)
       if (!(await authorize(id))) return undefined
-      set({ busy: label })
+      job(true)
       result = await run()
     }
+    // Stopped (Stop, or the tab closed): the document is as it was.
+    if (!result.ok && result.error.code === 'cancelled') {
+      if (get().docs[id]) toast('info', t('job.stopped'))
+      return undefined
+    }
     const value = unwrap(result)
+    if (!get().docs[id]) return undefined
     putDoc(value.doc, false)
     const note = noteText(value.note)
     const missingFont = value.note?.key === 'note.fontSimilar' ? String(value.note.values?.font ?? '') : ''
@@ -826,8 +872,13 @@ export async function apply(id: string, op: OpInput, label: string): Promise<App
     toast('error', messageFor(error))
     return undefined
   } finally {
-    set({ busy: null })
+    job(false)
   }
+}
+
+/** Stop on the Working box: the document's running change ends and the document stays as it was. */
+export function stopJob(id: string): void {
+  void window.api.stop(id, 'apply')
 }
 
 export async function undo(id: string): Promise<void> {
@@ -1017,14 +1068,24 @@ export function showHit(id: string, hit: SearchHit): void {
   updateView(id, { page: p, scrollTo: { page: p, nonce: Date.now(), ...(box ? { box } : {}) } })
 }
 
+/** Each document's latest search: an older one that ends after it (or stopped) changes nothing. */
+const searchRuns = new Map<string, number>()
+
 export async function runSearch(id: string, query: string, startAt = 0): Promise<void> {
   const trimmed = query.trim()
+  const run = (searchRuns.get(id) ?? 0) + 1
+  searchRuns.set(id, run)
+  const before = get().docs[id]?.search
   updateView(id, { search: { query, hits: [], index: 0, busy: trimmed.length > 0 } })
-  if (!trimmed) return
+  // Cleared (Escape, Stop): a search still running is stopped too (a new one replaces it by itself).
+  if (!trimmed) {
+    if (before?.busy) void window.api.stop(id, 'search')
+    return
+  }
   const options = get().docs[id]?.find
   const result = await window.api.search(id, trimmed, { matchCase: !!options?.matchCase, wholeWords: !!options?.wholeWords })
   const view = get().docs[id]
-  if (!view || view.search.query !== query) return // a newer search replaced this one
+  if (!view || searchRuns.get(id) !== run || view.search.query !== query) return // a newer search replaced this one, or it was stopped
   const hits = result.ok ? result.value : []
   const index = Math.max(0, Math.min(startAt, hits.length - 1))
   updateView(id, { search: { query, hits, index, busy: false } })
