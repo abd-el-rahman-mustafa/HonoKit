@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import JSZip from 'jszip'
 import PptxGenJS from 'pptxgenjs'
 import { BRAND } from '@shared/brand'
@@ -71,6 +72,8 @@ function descentOf(line: LineBlock): number {
 export interface Media {
   name: string
   bytes: Uint8Array
+  /** Type and content hash, to store a repeated picture once. */
+  key?: string
 }
 
 /** One slide being written: its shapes' XML, ids, pictures and links, and their relationships. */
@@ -101,13 +104,19 @@ export class SlideXml {
   get scale(): number {
     return this.s
   }
-  /** A picture file in the deck, related to this slide; its relationship id. */
+  /**
+   * A picture file in the deck, related to this slide; its relationship id. A picture the deck
+   * already holds (a logo on every page) is stored once and related once per slide.
+   */
   embed(bytes: Uint8Array, ext: 'png' | 'jpeg' | 'svg'): string {
-    const n = this.media.length + 1
-    const name = `hk${n}.${ext}`
-    this.media.push({ name, bytes })
-    const id = `rIdHk${n}`
-    this.rels.push({ id, target: `../media/${name}` })
+    const key = `${ext}:${createHash('sha256').update(bytes).digest('hex')}`
+    let index = this.media.findIndex((m) => m.key === key)
+    if (index < 0) {
+      index = this.media.length
+      this.media.push({ name: `hk${index + 1}.${ext}`, bytes, key })
+    }
+    const id = `rIdHk${index + 1}`
+    if (!this.rels.some((r) => r.id === id)) this.rels.push({ id, target: `../media/${this.media[index]!.name}` })
     return id
   }
   /** A web or mail address this slide links to; its relationship id (one per address). */

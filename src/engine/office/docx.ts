@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import JSZip from 'jszip'
 import {
   AlignmentType,
@@ -251,12 +252,18 @@ class Drawings {
     this.xml.set(key, xml)
     return new TextRun(key)
   }
+  /** A picture file in word/media; its relationship id. The same picture again reuses the first copy. */
   embed(bytes: Uint8Array, ext: 'png' | 'jpeg' | 'svg'): string {
+    const key = `${ext}:${createHash('sha256').update(bytes).digest('hex')}`
+    const known = this.seen.get(key)
+    if (known) return known
     const n = this.media.length + 1
     const rel = `rIdHk${n}`
     this.media.push({ name: `hk${n}.${ext}`, bytes, rel })
+    this.seen.set(key, rel)
     return rel
   }
+  private readonly seen = new Map<string, string>()
   id(): number {
     return ++this.ids
   }
