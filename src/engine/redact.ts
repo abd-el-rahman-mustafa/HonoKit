@@ -464,6 +464,33 @@ export interface RedactOptions {
 
 const overlaps = (a: Box, b: Box): boolean => Math.min(a[2], b[2]) > Math.max(a[0], b[0]) && Math.min(a[3], b[3]) > Math.max(a[1], b[1])
 
+/** Whether an annotation's /Rect is exactly four finite numbers (indirect ones resolved). */
+function readableRect(obj: mupdf.PDFObject): boolean {
+  try {
+    const rect = obj.get('Rect')
+    if (!rect.isArray() || rect.length !== 4) return false
+    for (let i = 0; i < 4; i++) {
+      const v = rect.get(i)
+      if (!v.isNumber() || !Number.isFinite(v.asNumber())) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether an annotation or widget lies on any of the marks. One whose /Rect cannot be read (a
+ * name among the numbers, too few or too many, missing) has no place we can trust: MuPDF reads
+ * it as some box elsewhere, while another reader may draw it on the mark, so on a page being
+ * redacted it counts as touching the marks and goes, its text with it.
+ */
+function touchesMarks(boxes: Box[], a: mupdf.PDFAnnotation | mupdf.PDFWidget): boolean {
+  if (!readableRect(a.getObject())) return true
+  const b = a.getBounds() as Box
+  return boxes.some((m) => overlaps(m, b))
+}
+
 const textOf = (o: mupdf.PDFObject, key: string): string => {
   try {
     const v = o.getInheritable(key)
@@ -492,13 +519,12 @@ function removeCovered(doc: PdfDoc, pageIndex: number, boxes: Box[]): void {
       const type = a.getType()
       // The marks themselves go when applied; a pop-up goes with its note.
       if (type === 'Redact' || type === 'Popup') continue
-      const b = a.getBounds() as Box
-      if (!boxes.some((m) => overlaps(m, b))) continue
+      if (!touchesMarks(boxes, a)) continue
       const obj = a.getObject()
       if (obj.isIndirect()) annots.push(obj.asIndirect())
       else inline.push(a)
     }
-    for (const w of page.getWidgets()) if (boxes.some((m) => overlaps(m, w.getBounds() as Box))) widgets.push(w.getObject())
+    for (const w of page.getWidgets()) if (touchesMarks(boxes, w)) widgets.push(w.getObject())
     for (const a of inline) page.deleteAnnotation(a)
   } finally {
     free(page)
@@ -534,7 +560,7 @@ function leftoverUnder(check: PdfDoc, pages: number[], marks: Array<{ page: numb
       for (const a of [...page.getAnnotations(), ...page.getWidgets()]) {
         const type = a.getType()
         if (type === 'Popup' || type === 'Redact') continue
-        if (!boxes.some((m) => overlaps(m, a.getBounds() as Box))) continue
+        if (!touchesMarks(boxes, a)) continue
         const obj = a.getObject()
         const words = (textOf(obj, 'Contents') + textOf(obj, 'V') + textOf(obj, 'RC')).replace(/\s/g, '')
         leftover += Math.max(1, [...words].length)

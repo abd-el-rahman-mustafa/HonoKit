@@ -232,4 +232,29 @@ describe('what redaction must keep and what it must take (§102)', () => {
     }
     expect(anyObjectHolds(asWritten(out), REPLY)).toBe(false)
   })
+
+  it('takes a comment whose box cannot be read off a page being redacted, and keeps one away from the marks', async () => {
+    // MuPDF reads each of these as some box away from the mark, while another reader may draw it
+    // on the mark; its text stayed in the file and the check counted nothing left.
+    for (const rect of ['/Rect [100 100 /Oops 120 120]', '/Rect [/A /B /C /D]', '/Rect [500 500 /X 510]', '/Rect (abc)', '', '/Rect 7 0 R']) {
+      const src = build(
+        [
+          '<< /Type /Catalog /Pages 2 0 R >>',
+          '<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 400 400] >>',
+          '<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Annots [5 0 R 6 0 R] >>',
+          '<< /Length LEN >>',
+          `<< /Type /Annot /Subtype /Text ${rect} /Contents (${SECRET}) >>`,
+          '<< /Type /Annot /Subtype /Text /Rect 8 0 R /Contents (KeptAwayNote) >>',
+          '[100 100 /Q 120]',
+          '[360 360 380 380]',
+        ],
+        { 4: enc.encode('BT ET') }
+      )
+      const marked = await applyOperation(src, MARK)
+      const done = await applyOperation(marked.bytes, { op: 'redactApply' })
+      expect(anyObjectHolds(done.bytes, SECRET), rect).toBe(false)
+      // A comment with a readable box (here an indirect one) away from the marks stays.
+      expect(anyObjectHolds(done.bytes, 'KeptAwayNote'), rect).toBe(true)
+    }
+  })
 })
